@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Browse {{ feed.name or 'RSS Feed' }} - Microblog{% endblock %}
+
+{% block content %}
+<div class="posts">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2>📡 {{ feed.name or 'RSS Feed' }}</h2>
+        <a href="{{ url_for('rss') }}" class="btn" style="background: #3a3b3c; color: #e4e6eb;">← Back to Feeds</a>
+    </div>
+    
+    {% if feed.name %}
+        <p style="color: #8a8d91; font-size: 14px; margin-bottom: 20px;">{{ feed.url }}</p>
+    {% endif %}
+    
+    {% if entries %}
+        {% for entry in entries %}
+            <div class="rss-entry">
+                <div class="rss-entry-header">
+                    <h3 class="rss-entry-title">
+                        <a href="{{ entry.link }}" target="_blank">{{ entry.title }}</a>
+                    </h3>
+                    {% if entry.published %}
+                        <span class="rss-entry-date">{{ entry.published }}</span>
+                    {% endif %}
+                </div>
+                
+                {% if entry.summary %}
+                    <div class="rss-entry-summary">
+                        {{ entry.summary[:200] }}{% if entry.summary|length > 200 %}...{% endif %}
+                    </div>
+                {% endif %}
+                
+                {% if entry.author %}
+                    <div class="rss-entry-author">By {{ entry.author }}</div>
+                {% endif %}
+                
+                <form method="POST" action="{{ url_for('add_rss_to_queue') }}" class="rss-entry-form">
+                    <input type="hidden" name="link" value="{{ entry.link }}">
+                    <input type="hidden" name="title" value="{{ entry.title }}">
+                    
+                    <div class="form-group" style="margin-top: 12px; margin-bottom: 12px;">
+                        <textarea name="commentary" placeholder="Add your commentary (optional)..." rows="2" style="width: 100%; padding: 8px; background: #3a3b3c; border: 1px solid #4a4b4c; border-radius: 6px; color: #e4e6eb; font-size: 14px; resize: vertical;"></textarea>
+                    </div>
+                    
+                    <div style="margin-bottom: 12px;">
+                        <label style="display: flex; align-items: center; color: #b0b3b8; cursor: pointer; margin-bottom: 8px;">
+                            <input type="checkbox" name="post_now" style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
+                            Post immediately (unchecked = add to queue)
+                        </label>
+                        <label style="display: flex; align-items: center; color: #b0b3b8; cursor: pointer;">
+                            <input type="checkbox" name="local_only" style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
+                            Local only (don't share to Bluesky/Mastodon)
+                        </label>
+                    </div>
+                    
+                    <div style="display: flex; gap: 8px;">
+                        <button type="submit" class="btn btn-primary" style="font-size: 14px; padding: 6px 12px;">Post</button>
+                        <a href="{{ entry.link }}" target="_blank" class="btn" style="background: #3a3b3c; color: #5b7ec4; font-size: 14px; padding: 6px 12px;">🔗 Open Link</a>
+                    </div>
+                </form>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="empty-state">
+            No entries found in this feed.
+        </p>
+    {% endif %}
+</div>
+{% endblock %}

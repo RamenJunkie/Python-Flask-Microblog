@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Queue - Microblog{% endblock %}
+
+{% block content %}
+<div class="posts">
+    <h2>Scheduled Posts Queue</h2>
+    <p style="color: #8a8d91; margin-bottom: 20px; text-align: center; font-size: 14px;">
+        Posts in the queue will be automatically posted every hour (starting from the top).
+    </p>
+    
+    {% if queue %}
+        <ul class="queue-list">
+            {% for item in queue %}
+                <li class="queue-item">
+                    <div class="content">
+                        <strong>#{{ loop.index }}</strong> - {{ item }}
+                    </div>
+                    <form method="POST" action="{{ url_for('delete_queue_item', index=loop.index0) }}" style="display: inline;">
+                        <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this queue item?')">Delete</button>
+                    </form>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p class="empty-state">
+            The queue is empty. Add posts from the home page.
+        </p>
+    {% endif %}
+    
+    <div style="margin-top: 30px;">
+        <a href="{{ url_for('index') }}" class="btn btn-primary">← Back to Home</a>
+    </div>
+</div>
+{% endblock %}

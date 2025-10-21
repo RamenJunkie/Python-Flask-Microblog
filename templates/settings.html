@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - {{ site_name|default('Microblog') }}{% endblock %}
+
+{% block content %}
+<div class="post-form">
+    <h2>⚙️ Settings</h2>
+    <p style="color: #8a8d91; margin-bottom: 20px; font-size: 14px;">
+        Configure your site and social media credentials
+    </p>
+    
+    <form method="POST" action="{{ url_for('settings') }}">
+        <h3 style="color: #5b7ec4; margin-top: 0; margin-bottom: 16px;">Site Configuration</h3>
+        
+        <div class="form-group">
+            <label for="site_name">Site Name</label>
+            <input type="text" name="site_name" id="site_name" 
+                   value="{{ settings.site_name }}" 
+                   placeholder="Microblog">
+            <small>This will appear in the header and page title</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="social_links">Social Links</label>
+            <textarea name="social_links" id="social_links" rows="3" 
+                      placeholder="Bluesky|https://bsky.app/profile/yourhandle, Mastodon|https://mastodon.social/@username">{{ settings.social_links }}</textarea>
+            <small>Format: Name|URL, Name|URL (comma-separated). Example: Bluesky|https://bsky.app/profile/you, Mastodon|https://mastodon.social/@you</small>
+        </div>
+        
+        <hr style="border: none; border-top: 1px solid #3a3b3c; margin: 24px 0;">
+        
+        <h3 style="color: #5b7ec4; margin-bottom: 16px;">Bluesky Credentials</h3>
+        
+        <div class="form-group">
+            <label for="bluesky_handle">Bluesky Handle</label>
+            <input type="text" name="bluesky_handle" id="bluesky_handle" 
+                   value="{{ settings.bluesky_handle }}" 
+                   placeholder="your-handle.bsky.social">
+            <small>Your Bluesky username (e.g., username.bsky.social)</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="bluesky_password">Bluesky App Password</label>
+            <input type="password" name="bluesky_password" id="bluesky_password" 
+                   value="{{ settings.bluesky_password }}"
+                   placeholder="xxxx-xxxx-xxxx-xxxx">
+            <small>Generate an app password in Bluesky Settings → App Passwords</small>
+        </div>
+        
+        <hr style="border: none; border-top: 1px solid #3a3b3c; margin: 24px 0;">
+        
+        <h3 style="color: #5b7ec4; margin-bottom: 16px;">Mastodon Credentials</h3>
+        
+        <div class="form-group">
+            <label for="mastodon_url">Mastodon Instance URL</label>
+            <input type="text" name="mastodon_url" id="mastodon_url" 
+                   value="{{ settings.mastodon_url }}"
+                   placeholder="https://mastodon.social">
+            <small>Your Mastodon instance URL (e.g., https://mastodon.social)</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="mastodon_token">Mastodon Access Token</label>
+            <input type="password" name="mastodon_token" id="mastodon_token" 
+                   value="{{ settings.mastodon_token }}"
+                   placeholder="your-access-token">
+            <small>Get from Settings → Development → New Application (needs write:statuses and write:media permissions)</small>
+        </div>
+        
+        <div style="display: flex; gap: 12px; margin-top: 24px;">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+            <a href="{{ url_for('index') }}" class="btn" style="background: #3a3b3c; color: #e4e6eb;">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<div class="posts" style="margin-top: 20px;">
+    <h2>📚 How to Get Credentials</h2>
+    
+    <div class="credential-help">
+        <h3>Site Configuration</h3>
+        <p><strong>Site Name:</strong> Customizes your microblog's branding throughout the site.</p>
+        <p><strong>Social Links:</strong> Add links to your social media profiles. They'll appear as clickable links below the header. Format each link as <code>Name|URL</code> and separate multiple links with commas.</p>
+    </div>
+    
+    <div class="credential-help" style="margin-top: 20px;">
+        <h3>Bluesky</h3>
+        <ol>
+            <li>Log in to your Bluesky account</li>
+            <li>Go to <strong>Settings → App Passwords</strong></li>
+            <li>Click <strong>"Add App Password"</strong></li>
+            <li>Give it a name (e.g., "Microblog")</li>
+            <li>Copy the generated password (format: xxxx-xxxx-xxxx-xxxx)</li>
+            <li>Paste it in the "Bluesky App Password" field above</li>
+        </ol>
+    </div>
+    
+    <div class="credential-help" style="margin-top: 20px;">
+        <h3>Mastodon</h3>
+        <ol>
+            <li>Log in to your Mastodon instance</li>
+            <li>Go to <strong>Settings → Development</strong></li>
+            <li>Click <strong>"New Application"</strong></li>
+            <li>Give it a name (e.g., "Microblog")</li>
+            <li>Enable these permissions:
+                <ul>
+                    <li><code>write:statuses</code> - Post statuses</li>
+                    <li><code>write:media</code> - Upload media</li>
+                </ul>
+            </li>
+            <li>Click <strong>"Submit"</strong></li>
+            <li>Copy the <strong>"Your access token"</strong></li>
+            <li>Paste it in the "Mastodon Access Token" field above</li>
+        </ol>
+    </div>
+</div>
+{% endblock %}

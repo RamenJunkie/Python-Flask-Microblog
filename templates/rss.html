@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}RSS Feeds - Microblog{% endblock %}
+
+{% block content %}
+<div class="post-form">
+    <h2>📡 RSS Feed Management</h2>
+    <p style="color: #8a8d91; margin-bottom: 20px; font-size: 14px;">
+        Add RSS feeds to easily share content from your favorite sources
+    </p>
+    
+    <form method="POST" action="{{ url_for('add_rss') }}">
+        <div class="form-group">
+            <label for="url">RSS Feed URL *</label>
+            <input type="text" name="url" id="url" required placeholder="https://example.com/feed.xml">
+        </div>
+        
+        <div class="form-group">
+            <label for="name">Feed Name (Optional)</label>
+            <input type="text" name="name" id="name" placeholder="My Favorite Blog">
+            <small>Give this feed a memorable name</small>
+        </div>
+        
+        <button type="submit" class="btn btn-primary">Add Feed</button>
+    </form>
+</div>
+
+<div class="posts">
+    <h2>Your RSS Feeds</h2>
+    
+    {% if feeds %}
+        <div class="rss-feed-list">
+            {% for feed in feeds %}
+                <div class="rss-feed-item">
+                    <div class="rss-feed-info">
+                        <h3>{{ feed.name or feed.url }}</h3>
+                        {% if feed.name %}
+                            <p class="rss-feed-url">{{ feed.url }}</p>
+                        {% endif %}
+                    </div>
+                    <div class="rss-feed-actions">
+                        <a href="{{ url_for('browse_rss', feed_id=feed.id) }}" class="btn btn-primary">Browse</a>
+                        <form method="POST" action="{{ url_for('delete_rss', feed_id=feed.id) }}" style="display: inline;">
+                            <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this feed?')">Delete</button>
+                        </form>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p class="empty-state">
+            No RSS feeds yet. Add one above to get started!
+        </p>
+    {% endif %}
+</div>
+{% endblock %}
