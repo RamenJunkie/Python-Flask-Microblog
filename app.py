@@ -275,6 +275,18 @@ def get_posted_entries(page=1, per_page=20, search_query=None):
     except FileNotFoundError:
         return {'entries': [], 'total': 0, 'page': 1, 'per_page': per_page, 'total_pages': 0}
 
+def get_all_posted_entries():
+    """Get all posted entries without pagination"""
+    try:
+        with open(POSTED_FILE, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        # Parse all lines (reversed so newest first)
+        entries = [parse_posted_line(line) for line in reversed(lines) if line.strip()]
+        return entries
+    except FileNotFoundError:
+        return []
+
 def get_queue_entries():
     """Get entries waiting in topost.txt"""
     try:
@@ -929,6 +941,99 @@ def add_rss_to_queue():
         flash('Added to queue!', 'success')
     
     return redirect(request.referrer or url_for('rss'))
+
+@app.route('/digest')
+@login_required
+def generate_digest():
+    """Generate an HTML digest of posts since last digest"""
+    from flask import make_response
+    import re
+    
+    # Get last digest date
+    last_digest_str = get_setting('last_digest_date')
+    if last_digest_str:
+        try:
+            last_digest = datetime.strptime(last_digest_str, '%Y-%m-%d %H:%M:%S')
+        except:
+            last_digest = None
+    else:
+        last_digest = None
+    
+    # Get all entries
+    all_entries = get_all_posted_entries()
+    
+    # Filter entries since last digest
+    if last_digest:
+        new_entries = [e for e in all_entries if e['timestamp'] and e['timestamp'] > last_digest]
+    else:
+        new_entries = all_entries
+    
+    if not new_entries:
+        flash('No new posts since last digest', 'error')
+        return redirect(url_for('index'))
+    
+    # Generate digest HTML
+    site_name = get_setting('site_name', 'Microblog')
+    today = datetime.now()
+    digest_title = f"{site_name} Link List for {today.strftime('%A %Y-%m-%d')}"
+    
+    html_parts = [f'<p>{digest_title}</p>\n']
+    
+    for entry in reversed(new_entries):  # Oldest first
+        parsed = parse_content(entry['content'])
+        
+        if parsed['type'] == 'url':
+            # Format date
+            date_str = entry['timestamp'].strftime('%d-%b-%Y') if entry['timestamp'] else 'Unknown'
+            
+            # Fetch page metadata for description and images
+            try:
+                metadata = fetch_page_metadata(parsed['url'])
+                description = metadata.get('description', '')
+                og_image = metadata.get('image_url', '')
+            except:
+                description = ''
+                og_image = ''
+            
+            # Build card HTML
+            card_html = '<div class="link_list_card">'
+            
+            # Image - use OG image if available, otherwise RSS icon
+            if og_image:
+                card_html += f'<div class="link_card_image"><img src="{og_image}" class="link_card_image_thumb" height="150" alt="link image"></div>'
+            else:
+                card_html += '<div class="link_card_image"><img src="/images/rss.png" class="link_card_image_thumb" height="150" alt="link image"></div>'
+            
+            # Date and link
+            card_html += f'<span class="link_list_date">{date_str}</span> - '
+            card_html += f'<a class="link_list_link" href="{parsed["url"]}">{parsed["url"]}</a></p>'
+            
+            # Brief Summary from RSS description (first 200 chars)
+            if description:
+                summary_text = description[:200]
+                if len(description) > 200:
+                    summary_text += '...'
+                card_html += f'<p><span class="link_list_summary_title">Brief Summary:</span> <span class="link_list_summary">"{summary_text}"</span></p>'
+            
+            # Personal commentary
+            commentary = parsed['text'] if parsed['text'] else ''
+            card_html += f'<p><span class="link_list_summary_title">Personal Notes and Commentary:</span> <span class="link_list_summary">"{commentary}"</span></p>'
+            
+            card_html += '</div>\n'
+            html_parts.append(card_html)
+    
+    digest_html = '\n'.join(html_parts)
+    
+    # Update last digest date
+    set_setting('last_digest_date', today.strftime('%Y-%m-%d %H:%M:%S'))
+    
+    # Create response with file download
+    filename = f"{today.strftime('%Y-%m-%d')}-Digest.txt"
+    response = make_response(digest_html)
+    response.headers['Content-Type'] = 'text/plain; charset=utf-8'
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    
+    return response
 
 @app.route('/images/<path:filename>')
 def serve_image(filename):

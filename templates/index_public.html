@@ -3,17 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Microblog</title>
+    <title>{{ site_name|default('Microblog') }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <header>
         <div class="container">
             <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <h1>📝 Microblog</h1>
+                <h1>📝 {{ site_name|default('Microblog') }}</h1>
                 <a href="{{ url_for('login') }}" class="btn btn-primary">Login</a>
             </div>
         </div>
+        {% if social_links %}
+        <div class="container">
+            <div class="social-links">
+                {% for link in social_links.split(',') %}
+                    {% set link_parts = link.strip().split('|') %}
+                    {% if link_parts|length == 2 %}
+                        <a href="{{ link_parts[1] }}" target="_blank" title="{{ link_parts[0] }}">
+                            {{ link_parts[0] }}
+                        </a>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </header>
     
     <main class="container">
@@ -52,10 +66,27 @@
                         </div>
                         
                         {% if parsed.type == 'url' %}
-                            <a href="{{ parsed.url }}" target="_blank" class="url">🔗 {{ parsed.url }}</a>
+                            {% if entry.metadata %}
+                                <a href="{{ parsed.url }}" target="_blank" class="link-preview-card">
+                                    {% if entry.metadata.local_image %}
+                                        <div class="link-preview-image">
+                                            <img src="/images/{{ entry.metadata.local_image }}" alt="{{ entry.metadata.title }}">
+                                        </div>
+                                    {% endif %}
+                                    <div class="link-preview-content">
+                                        <div class="link-preview-title">{{ entry.metadata.title }}</div>
+                                        {% if entry.metadata.description %}
+                                            <div class="link-preview-description">{{ entry.metadata.description[:150] }}{% if entry.metadata.description|length > 150 %}...{% endif %}</div>
+                                        {% endif %}
+                                        <div class="link-preview-url">🔗 {{ parsed.url }}</div>
+                                    </div>
+                                </a>
+                            {% else %}
+                                <a href="{{ parsed.url }}" target="_blank" class="url">🔗 {{ parsed.url }}</a>
+                            {% endif %}
                         {% elif parsed.type == 'image' %}
                             <div class="post-entry-image">
-                                <img src="{{ url_for('static', filename='../images/' + parsed.image) }}" alt="Post image">
+                                <img src="/images/{{ parsed.image }}" alt="Post image" onerror="this.onerror=null; this.parentElement.innerHTML='<span class=\'image-ref\'>🖼️ {{ parsed.image }}</span>';">
                             </div>
                         {% endif %}
                     </div>

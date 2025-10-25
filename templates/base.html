@@ -14,6 +14,7 @@
                 <a href="{{ url_for('index') }}">Home</a>
                 <a href="{{ url_for('queue') }}">Queue{% if queue_count %}<span class="badge">{{ queue_count }}</span>{% endif %}</a>
                 <a href="{{ url_for('rss') }}">RSS</a>
+                <a href="{{ url_for('generate_digest') }}" title="Generate Digest">📰</a>
                 <a href="{{ url_for('settings') }}">Settings</a>
                 <a href="{{ url_for('logout') }}" style="color: #e4405f;">Logout</a>
             </nav>
