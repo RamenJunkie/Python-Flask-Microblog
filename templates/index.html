@@ -50,28 +50,51 @@
         {% endif %}
     </form>
     
+    
     {% if entries %}
-        {% for entry in entries %}
-            <div class="post-entry">
-                {% if entry.timestamp %}
-                    <div class="timestamp">{{ entry.timestamp.strftime('%B %d, %Y at %I:%M %p') }}</div>
-                {% endif %}
-                
-                {% set parsed = entry.content | parse_content %}
-                
-                <div class="content">
-                    {{ parsed.text }}
-                </div>
-                
-                {% if parsed.type == 'url' %}
-                    <a href="{{ parsed.url }}" target="_blank" class="url">🔗 {{ parsed.url }}</a>
-                {% elif parsed.type == 'image' %}
-                    <div class="post-entry-image">
-                        <img src="/images/{{ parsed.image }}" alt="Post image" onerror="this.onerror=null; this.parentElement.innerHTML='<span class=\'image-ref\'>🖼️ {{ parsed.image }}</span>';">
+                {% for entry in entries %}
+                    <div class="post-entry">
+                        {% if entry.timestamp %}
+                            <div class="timestamp">{{ entry.timestamp.strftime('%B %d, %Y at %I:%M %p') }}</div>
+                        {% endif %}
+                        
+                        {% if entry.url %}
+                            {# URL post with metadata #}
+                            {% if entry.image %}
+                                <div class="post-entry-image">
+                                    <img src="/images/{{ entry.image }}" alt="Post image">
+                                </div>
+                            {% endif %}
+                            
+                            <div class="content">
+                                {% if entry.headline %}
+                                    <strong><a href="{{ entry.url }}" target="_blank">{{ entry.headline }}</a></strong><br>
+                                {% else %}
+                                    <a href="{{ entry.url }}" target="_blank" class="url">🔗 {{ entry.url }}</a>
+                                {% endif %}
+                                
+                                {% if entry.summary %}
+                                    <div style="margin-top: 8px; color: #b0b3b8; font-size: 14px;">{{ entry.summary }}</div>
+                                {% endif %}
+                                
+                                {% if entry.commentary %}
+                                    <div style="margin-top: 8px;">{{ entry.commentary }}</div>
+                                {% endif %}
+                            </div>
+                        {% elif entry.image %}
+                            {# Image post #}
+                            <div class="post-entry-image">
+                                <img src="/images/{{ entry.image }}" alt="Post image">
+                            </div>
+                            {% if entry.commentary %}
+                                <div class="content">{{ entry.commentary }}</div>
+                            {% endif %}
+                        {% elif entry.commentary %}
+                            {# Text only post #}
+                            <div class="content">{{ entry.commentary }}</div>
+                        {% endif %}
                     </div>
-                {% endif %}
-            </div>
-        {% endfor %}
+                {% endfor %}
         
         {% if pagination.total_pages > 1 %}
             <div class="pagination">

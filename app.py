@@ -213,19 +213,44 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def parse_posted_line(line):
-    """Parse a line from posted.txt"""
-    if line.startswith('['):
-        # Extract timestamp
-        end_bracket = line.find(']')
-        if end_bracket != -1:
-            timestamp_str = line[1:end_bracket]
-            content = line[end_bracket+2:].strip()
-            try:
-                timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-            except:
-                timestamp = None
-            return {'timestamp': timestamp, 'content': content, 'raw': line}
-    return {'timestamp': None, 'content': line.strip(), 'raw': line}
+    """Parse a line from posted.txt - new pipe-delimited format only"""
+    if not line.strip():
+        return None
+    
+    # New format: [DATETIME]|url|headline|imageFilename|summary|commentary
+    if not line.startswith('['):
+        return None
+    
+    bracket_end = line.find(']')
+    if bracket_end == -1:
+        return None
+    
+    timestamp_str = line[1:bracket_end]
+    try:
+        timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+    except:
+        return None
+    
+    # Check for pipe-delimited format
+    rest = line[bracket_end+1:].strip()
+    if not rest.startswith('|'):
+        return None
+    
+    rest = rest[1:]  # Remove leading pipe
+    parts = rest.split('|')
+    
+    if len(parts) < 5:
+        return None
+    
+    return {
+        'timestamp': timestamp,
+        'url': parts[0].strip() if parts[0].strip() and parts[0].strip() != 'NULL' else None,
+        'headline': parts[1].strip() if parts[1].strip() and parts[1].strip() != 'NULL' else None,
+        'image': parts[2].strip() if parts[2].strip() and parts[2].strip() != 'NULL' else None,
+        'summary': parts[3].strip() if parts[3].strip() and parts[3].strip() != 'NULL' else None,
+        'commentary': parts[4].strip() if parts[4].strip() and parts[4].strip() != 'NULL' else None,
+        'raw': line
+    }
 
 def parse_content(content):
     """Parse content to extract URL, image, and text"""
@@ -254,11 +279,26 @@ def get_posted_entries(page=1, per_page=20, search_query=None):
             lines = f.readlines()
         
         # Parse all lines
-        entries = [parse_posted_line(line) for line in reversed(lines) if line.strip()]
+        entries = []
+        for line in reversed(lines):
+            if line.strip():
+                parsed = parse_posted_line(line)
+                if parsed:  # Only add if parsing succeeded
+                    entries.append(parsed)
         
         # Filter by search query if provided
         if search_query:
-            entries = [e for e in entries if search_query.lower() in e['content'].lower()]
+            filtered = []
+            for e in entries:
+                search_text = ' '.join(filter(None, [
+                    e.get('headline', ''),
+                    e.get('summary', ''),
+                    e.get('commentary', ''),
+                    e.get('content', '')
+                ])).lower()
+                if search_query.lower() in search_text:
+                    filtered.append(e)
+            entries = filtered
         
         # Paginate
         total = len(entries)
@@ -270,7 +310,7 @@ def get_posted_entries(page=1, per_page=20, search_query=None):
             'total': total,
             'page': page,
             'per_page': per_page,
-            'total_pages': (total + per_page - 1) // per_page
+            'total_pages': (total + per_page - 1) // per_page if total > 0 else 0
         }
     except FileNotFoundError:
         return {'entries': [], 'total': 0, 'page': 1, 'per_page': per_page, 'total_pages': 0}
@@ -282,7 +322,12 @@ def get_all_posted_entries():
             lines = f.readlines()
         
         # Parse all lines (reversed so newest first)
-        entries = [parse_posted_line(line) for line in reversed(lines) if line.strip()]
+        entries = []
+        for line in reversed(lines):
+            if line.strip():
+                parsed = parse_posted_line(line)
+                if parsed:  # Only add if parsing succeeded
+                    entries.append(parsed)
         return entries
     except FileNotFoundError:
         return []
@@ -562,17 +607,27 @@ def post_to_social_media(content):
             text_content = parsed['text']
             metadata = fetch_page_metadata(url)
             
+            # Download image for thumbnail
             if metadata['image_url']:
                 image_data = download_and_process_image(metadata['image_url'])
             
-            bluesky_client.send_post(text=text_content, embed=models.AppBskyEmbedExternal.Main(
-                external=models.AppBskyEmbedExternal.External(
-                    uri=url,
-                    title=metadata['title'][:300],
-                    description=metadata['description'][:1000] if metadata['description'] else ''
-                )
-            ))
+            # Post to Bluesky with embed
+            external_embed = models.AppBskyEmbedExternal.External(
+                uri=url,
+                title=metadata['title'][:300],
+                description=metadata['description'][:1000] if metadata['description'] else ''
+            )
             
+            # Add thumbnail if available
+            if image_data:
+                blob = upload_image_to_bluesky(bluesky_client, image_data)
+                if blob:
+                    external_embed.thumb = blob.blob
+            
+            embed = models.AppBskyEmbedExternal.Main(external=external_embed)
+            bluesky_client.send_post(text=text_content, embed=embed)
+            
+            # Post to Mastodon
             post_text = f"{text_content}\n\n{url}"
             if image_data:
                 media_dict = mastodon_client.media_post(image_data, mime_type='image/jpeg')
@@ -586,16 +641,19 @@ def post_to_social_media(content):
             image_data = load_local_image(image_filename)
             
             if image_data:
+                # Post to Bluesky
                 blob = upload_image_to_bluesky(bluesky_client, image_data)
                 if blob:
                     image_embed = models.AppBskyEmbedImages.Image(alt="", image=blob.blob)
                     embed = models.AppBskyEmbedImages.Main(images=[image_embed])
                     bluesky_client.send_post(text=text_content, embed=embed)
                 
+                # Post to Mastodon
                 media_dict = mastodon_client.media_post(image_data, mime_type='image/jpeg')
                 mastodon_client.status_post(text_content, media_ids=[media_dict['id']])
         
         else:
+            # Text only
             text_content = parsed['text']
             bluesky_client.send_post(text=text_content)
             mastodon_client.status_post(text_content)
@@ -604,13 +662,101 @@ def post_to_social_media(content):
     
     except Exception as e:
         print(f"Error posting to social media: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def add_to_posted(content):
-    """Add entry to posted.txt with timestamp"""
+    """Add entry to posted.txt with timestamp and metadata"""
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Parse the content
+    parsed = parse_content(content)
+    
+    # Initialize metadata fields
+    url = 'NULL'
+    headline = 'NULL'
+    image_filename = 'NULL'
+    summary = 'NULL'
+    commentary = 'NULL'
+    
+    if parsed['type'] == 'url':
+        url = parsed['url']
+        commentary = parsed['text'].replace('|', '-') if parsed['text'] else 'NULL'
+        
+        # Fetch metadata
+        try:
+            metadata = fetch_page_metadata(url)
+            headline = metadata.get('title', 'NULL').replace('|', '-')  # Remove pipes to avoid conflicts
+            
+            # Get description/summary
+            description = metadata.get('description', '')
+            if description:
+                summary = description[:200].replace('|', '-')
+                if len(description) > 200:
+                    summary += '...'
+            
+            # Download and save image
+            image_url = metadata.get('image_url')
+            if image_url:
+                try:
+                    import hashlib
+                    # Create unique filename from URL hash
+                    url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
+                    image_filename_local = f"link_{url_hash}.jpg"
+                    image_path = os.path.join(IMAGES_FOLDER, image_filename_local)
+                    
+                    # Download image
+                    headers = {'User-Agent': USER_AGENT}
+                    img_response = requests.get(image_url, headers=headers, timeout=10)
+                    img_response.raise_for_status()
+                    
+                    # Process and crop image to 300x200
+                    img = Image.open(BytesIO(img_response.content))
+                    if img.mode in ('RGBA', 'LA', 'P'):
+                        img = img.convert('RGB')
+                    
+                    # Calculate crop to 3:2 ratio (300x200)
+                    target_ratio = 600 / 400  # 1.5
+                    img_ratio = img.width / img.height
+                    
+                    if img_ratio > target_ratio:
+                        # Image is wider, crop width
+                        new_width = int(img.height * target_ratio)
+                        left = (img.width - new_width) // 2
+                        img = img.crop((left, 0, left + new_width, img.height))
+                    else:
+                        # Image is taller, crop height
+                        new_height = int(img.width / target_ratio)
+                        top = (img.height - new_height) // 2
+                        img = img.crop((0, top, img.width, top + new_height))
+                    
+                    # Resize to exactly 300x200
+                    img = img.resize((300, 200), Image.Resampling.LANCZOS)
+                    
+                    # Save
+                    img.save(image_path, format='JPEG', quality=85)
+                    image_filename = image_filename_local
+                    print(f"✓ Saved link image: {image_filename}")
+                except Exception as e:
+                    print(f"Error downloading/processing link image: {e}")
+        except Exception as e:
+            print(f"Error fetching metadata: {e}")
+    
+    elif parsed['type'] == 'image':
+        image_filename = parsed['image']
+        commentary = parsed['text'].replace('|', '-') if parsed['text'] else 'NULL'
+    
+    else:
+        # Text only
+        commentary = parsed['text'].replace('|', '-') if parsed['text'] else 'NULL'
+    
+    # Build the pipe-delimited line
+    # Format: [DATETIME]|url|headline|imageFilename|summary|commentary
+    line = f"[{timestamp}]|{url}|{headline}|{image_filename}|{summary}|{commentary}\n"
+    
     with open(POSTED_FILE, 'a', encoding='utf-8') as f:
-        f.write(f"[{timestamp}] {content}\n")
+        f.write(line)
 
 # Scheduled posting thread
 def auto_poster_thread():
@@ -755,6 +901,11 @@ def index():
     
     result = get_posted_entries(page=page, per_page=20, search_query=search if search else None)
     queue = get_queue_entries()
+    
+    # Debug output
+    print(f"DEBUG: Found {len(result['entries'])} entries for page {page}")
+    if result['entries']:
+        print(f"DEBUG: First entry: {result['entries'][0]}")
     
     if 'user_id' in session:
         return render_template('index.html', 
@@ -947,7 +1098,6 @@ def add_rss_to_queue():
 def generate_digest():
     """Generate an HTML digest of posts since last digest"""
     from flask import make_response
-    import re
     
     # Get last digest date
     last_digest_str = get_setting('last_digest_date')
@@ -980,44 +1130,32 @@ def generate_digest():
     html_parts = [f'<p>{digest_title}</p>\n']
     
     for entry in reversed(new_entries):  # Oldest first
-        parsed = parse_content(entry['content'])
-        
-        if parsed['type'] == 'url':
+        # Only include URL posts in digest
+        if entry.get('url'):
             # Format date
             date_str = entry['timestamp'].strftime('%d-%b-%Y') if entry['timestamp'] else 'Unknown'
-            
-            # Fetch page metadata for description and images
-            try:
-                metadata = fetch_page_metadata(parsed['url'])
-                description = metadata.get('description', '')
-                og_image = metadata.get('image_url', '')
-            except:
-                description = ''
-                og_image = ''
             
             # Build card HTML
             card_html = '<div class="link_list_card">'
             
-            # Image - use OG image if available, otherwise RSS icon
-            if og_image:
-                card_html += f'<div class="link_card_image"><img src="{og_image}" class="link_card_image_thumb" height="150" alt="link image"></div>'
+            # Image - use saved image or fallback to RSS icon
+            if entry.get('image'):
+                card_html += f'<div class="link_card_image"><img src="/images/{entry["image"]}" class="link_card_image_thumb" height="150" alt="link image"></div>'
             else:
                 card_html += '<div class="link_card_image"><img src="/images/rss.png" class="link_card_image_thumb" height="150" alt="link image"></div>'
             
-            # Date and link
+            # Date and link with headline
             card_html += f'<span class="link_list_date">{date_str}</span> - '
-            card_html += f'<a class="link_list_link" href="{parsed["url"]}">{parsed["url"]}</a></p>'
+            headline = entry.get('headline') or entry['url']
+            card_html += f'<a class="link_list_link" href="{entry["url"]}">{headline}</a></p>'
             
-            # Brief Summary from RSS description (first 200 chars)
-            if description:
-                summary_text = description[:200]
-                if len(description) > 200:
-                    summary_text += '...'
-                card_html += f'<p><span class="link_list_summary_title">Brief Summary:</span> <span class="link_list_summary">"{summary_text}"</span></p>'
+            # Brief Summary (if available)
+            if entry.get('summary'):
+                card_html += f'<p><span class="link_list_summary_title">Brief Summary:</span> <span class="link_list_summary">"{entry["summary"]}"</span></p>'
             
-            # Personal commentary
-            commentary = parsed['text'] if parsed['text'] else ''
-            card_html += f'<p><span class="link_list_summary_title">Personal Notes and Commentary:</span> <span class="link_list_summary">"{commentary}"</span></p>'
+            # Personal commentary (if available)
+            if entry.get('commentary'):
+                card_html += f'<p><span class="link_list_summary_title">Personal Notes and Commentary:</span> <span class="link_list_summary">"{entry["commentary"]}"</span></p>'
             
             card_html += '</div>\n'
             html_parts.append(card_html)

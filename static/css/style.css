@@ -12,8 +12,24 @@ body {
     min-height: 100vh;
 }
 
+/* Link colors - muted but visible */
+a {
+    color: #8ab4f8;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+a:hover {
+    color: #aaccff;
+    text-decoration: underline;
+}
+
+a:visited {
+    color: #9d8df7;
+}
+
 .container {
-    max-width: 900px;
+    max-width: 800px;
     margin: 0 auto;
     padding: 20px;
 }
