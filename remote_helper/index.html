@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microblog</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+
+        .header {
+            background-color: #2a2a2a;
+            padding: 1.5rem 2rem;
+            border-bottom: 2px solid #3a3a3a;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 1.8rem;
+            margin-bottom: 0.8rem;
+            color: #ffffff;
+        }
+
+        .social-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.5rem;
+            justify-content: center;
+        }
+
+        .social-links a {
+            color: #6fa3ef;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .social-links a:hover {
+            color: #8fb9f5;
+            text-decoration: underline;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .post-entry {
+            background-color: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .post-entry:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+
+        .timestamp {
+            color: #888;
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        .post-entry-image {
+            margin-bottom: 1rem;
+        }
+
+        .post-entry-image img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+            display: block;
+        }
+
+        .content {
+            color: #e0e0e0;
+        }
+
+        .content strong a {
+            color: #6fa3ef;
+            text-decoration: none;
+            font-size: 1.1rem;
+        }
+
+        .content strong a:hover {
+            text-decoration: underline;
+        }
+
+        .content .description {
+            margin-top: 8px;
+            color: #b0b3b8;
+            font-size: 14px;
+        }
+
+        .content .comment {
+            margin-top: 8px;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 1rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+
+        .pagination button {
+            background-color: #3a3a3a;
+            color: #e0e0e0;
+            border: 1px solid #4a4a4a;
+            padding: 0.6rem 1.2rem;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-size: 0.95rem;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background-color: #4a4a4a;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination .page-info {
+            color: #888;
+            font-size: 0.95rem;
+        }
+
+        .footer {
+            background-color: #2a2a2a;
+            padding: 1.5rem 2rem;
+            border-top: 2px solid #3a3a3a;
+            text-align: center;
+            margin-top: 3rem;
+            color: #888;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #888;
+            font-size: 1.1rem;
+        }
+
+        .error {
+            background-color: #3a2222;
+            border: 1px solid #5a3333;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            color: #f88;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .header {
+                padding: 1rem;
+            }
+
+            .header h1 {
+                font-size: 1.4rem;
+            }
+
+            .social-links {
+                gap: 1rem;
+                flex-direction: column;
+            }
+
+            .post-entry {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1 id="blog-title">Loading...</h1>
+            <div class="social-links" id="social-links"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="content">
+            <div class="loading">Loading posts...</div>
+        </div>
+
+        <div class="pagination" id="pagination" style="display: none;">
+            <button id="first-page">First</button>
+            <button id="prev-page">Previous</button>
+            <span class="page-info" id="page-info"></span>
+            <button id="next-page">Next</button>
+            <button id="last-page">Last</button>
+        </div>
+    </div>
+
+    <div class="footer" id="footer">
+        <p>Loading...</p>
+    </div>
+
+    <script>
+        const POSTS_PER_PAGE = 10;
+        let allPosts = [];
+        let currentPage = 1;
+        let totalPages = 1;
+
+        async function loadSettings() {
+            try {
+                const response = await fetch('settings.md');
+                if (!response.ok) throw new Error('Could not load settings.md');
+                
+                const text = await response.text();
+                const lines = text.split('\n').filter(line => line.trim());
+                
+                if (lines.length > 0) {
+                    document.getElementById('blog-title').textContent = lines[0].trim();
+                }
+
+                const socialLinksContainer = document.getElementById('social-links');
+                socialLinksContainer.innerHTML = '';
+
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    
+                    if (line.startsWith('Footer |')) {
+                        const footerText = line.substring(7).trim();
+                        document.getElementById('footer').innerHTML = `<p>${footerText}</p>`;
+                    } else if (line.includes('|')) {
+                        const [text, url] = line.split('|').map(s => s.trim());
+                        if (text && url) {
+                            const link = document.createElement('a');
+                            link.href = url;
+                            link.textContent = text;
+                            link.target = '_blank';
+                            link.rel = 'noopener noreferrer';
+                            socialLinksContainer.appendChild(link);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading settings:', error);
+                document.getElementById('blog-title').textContent = 'Microblog';
+                document.getElementById('footer').innerHTML = '<p>Microblog</p>';
+            }
+        }
+
+        async function loadPosts() {
+            try {
+                const response = await fetch('posted.txt');
+                if (!response.ok) throw new Error('Could not load posted.txt');
+                
+                const text = await response.text();
+                const lines = text.split('\n').filter(line => line.trim());
+                
+                allPosts = lines.map(line => {
+                    const match = line.match(/^\[(.+?)\]\|(.+)/);
+                    if (match) {
+                        const [, datetime, rest] = match;
+                        const parts = rest.split('|');
+                        
+                        return {
+                            datetime,
+                            url: parts[0] || null,
+                            title: parts[1] || null,
+                            image: parts[2] || null,
+                            description: parts[3] || null,
+                            comment: parts[4] || null
+                        };
+                    }
+                    return null;
+                }).filter(post => post !== null);
+
+                allPosts.reverse();
+                
+                totalPages = Math.ceil(allPosts.length / POSTS_PER_PAGE);
+                displayPage(1);
+            } catch (error) {
+                console.error('Error loading posts:', error);
+                document.getElementById('content').innerHTML = `
+                    <div class="error">
+                        <strong>Error loading posts:</strong> ${error.message}
+                        <br><br>
+                        Make sure posted.txt is in the same directory as this HTML file.
+                    </div>
+                `;
+            }
+        }
+
+        function displayPage(page) {
+            currentPage = page;
+            const start = (page - 1) * POSTS_PER_PAGE;
+            const end = start + POSTS_PER_PAGE;
+            const pagePosts = allPosts.slice(start, end);
+
+            const contentContainer = document.getElementById('content');
+            contentContainer.innerHTML = '';
+
+            pagePosts.forEach(post => {
+                const postEntry = document.createElement('div');
+                postEntry.className = 'post-entry';
+
+                const timestamp = document.createElement('div');
+                timestamp.className = 'timestamp';
+                timestamp.textContent = formatDate(post.datetime);
+                postEntry.appendChild(timestamp);
+
+                if (post.image && post.image !== 'NULL') {
+                    const imageDiv = document.createElement('div');
+                    imageDiv.className = 'post-entry-image';
+                    const img = document.createElement('img');
+                    img.src = `images/${post.image}`;
+                    img.alt = 'Post image';
+                    imageDiv.appendChild(img);
+                    postEntry.appendChild(imageDiv);
+                }
+
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'content';
+
+                if (post.url && post.title) {
+                    const strong = document.createElement('strong');
+                    const link = document.createElement('a');
+                    link.href = post.url;
+                    link.textContent = decodeHtmlEntities(post.title);
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    strong.appendChild(link);
+                    contentDiv.appendChild(strong);
+                    contentDiv.appendChild(document.createElement('br'));
+                }
+
+                if (post.description && post.description !== 'NULL') {
+                    const descDiv = document.createElement('div');
+                    descDiv.className = 'description';
+                    descDiv.textContent = decodeHtmlEntities(post.description);
+                    contentDiv.appendChild(descDiv);
+                }
+
+                if (post.comment && post.comment !== 'NULL') {
+                    const commentDiv = document.createElement('div');
+                    commentDiv.className = 'comment';
+                    commentDiv.textContent = decodeHtmlEntities(post.comment);
+                    contentDiv.appendChild(commentDiv);
+                }
+
+                postEntry.appendChild(contentDiv);
+                contentContainer.appendChild(postEntry);
+            });
+
+            document.getElementById('pagination').style.display = 'flex';
+            updatePagination();
+        }
+
+        function updatePagination() {
+            document.getElementById('page-info').textContent = `Page ${currentPage} of ${totalPages}`;
+            document.getElementById('first-page').disabled = currentPage === 1;
+            document.getElementById('prev-page').disabled = currentPage === 1;
+            document.getElementById('next-page').disabled = currentPage === totalPages;
+            document.getElementById('last-page').disabled = currentPage === totalPages;
+        }
+
+        function formatDate(datetime) {
+            const date = new Date(datetime.replace(' ', 'T'));
+            return date.toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function decodeHtmlEntities(text) {
+            const textarea = document.createElement('textarea');
+            textarea.innerHTML = text;
+            return textarea.value;
+        }
+
+        document.getElementById('first-page').addEventListener('click', () => displayPage(1));
+        document.getElementById('prev-page').addEventListener('click', () => displayPage(currentPage - 1));
+        document.getElementById('next-page').addEventListener('click', () => displayPage(currentPage + 1));
+        document.getElementById('last-page').addEventListener('click', () => displayPage(totalPages));
+
+        Promise.all([loadSettings(), loadPosts()]);
+    </script>
+</body>
+</html>
