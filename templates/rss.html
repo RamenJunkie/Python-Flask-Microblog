@@ -21,6 +21,28 @@
             <small>Give this feed a memorable name</small>
         </div>
         
+        <div class="checkbox-group">
+            <label>
+                <input type="checkbox" name="auto_queue" id="auto_queue" onchange="toggleAutoPostMode()">
+                Automatically process new entries
+            </label>
+        </div>
+        <small style="color: #8a8d91; display: block; margin-top: 4px; margin-bottom: 16px;">
+            When enabled, new entries from this feed will be automatically processed
+        </small>
+        
+        <div id="auto_post_mode_section" style="display: none; margin-bottom: 20px;">
+            <label for="auto_post_mode">Auto-post behavior:</label>
+            <select name="auto_post_mode" id="auto_post_mode" style="width: 100%; padding: 10px; border: 1px solid #3a3d42; background: #1e2124; color: #dcddde; border-radius: 4px; margin-top: 8px;">
+                <option value="queue">Add to Queue (manual posting)</option>
+                <option value="social">Post to Socials Immediately</option>
+                <option value="local">Post Locally Only (no socials)</option>
+            </select>
+            <small style="color: #8a8d91; display: block; margin-top: 4px;">
+                Choose how new entries should be handled automatically
+            </small>
+        </div>
+        
         <button type="submit" class="btn btn-primary">Add Feed</button>
     </form>
 </div>
@@ -33,12 +55,55 @@
             {% for feed in feeds %}
                 <div class="rss-feed-item">
                     <div class="rss-feed-info">
-                        <h3>{{ feed.name or feed.url }}</h3>
+                        <h3>
+                            {{ feed.name or feed.url }}
+                            {% if feed.auto_queue %}
+                                {% set mode = feed.auto_post_mode or 'queue' %}
+                                {% if mode == 'social' %}
+                                    <span class="badge" style="background: #5865f2; margin-left: 8px;">🚀 AUTO-POST SOCIAL</span>
+                                {% elif mode == 'local' %}
+                                    <span class="badge" style="background: #4a9d5f; margin-left: 8px;">📝 AUTO-POST LOCAL</span>
+                                {% else %}
+                                    <span class="badge" style="background: #f26522; margin-left: 8px;">📋 AUTO-QUEUE</span>
+                                {% endif %}
+                            {% endif %}
+                        </h3>
                         {% if feed.name %}
                             <p class="rss-feed-url">{{ feed.url }}</p>
                         {% endif %}
+                        {% if feed.auto_queue %}
+                            {% set mode = feed.auto_post_mode or 'queue' %}
+                            <p style="color: #8a8d91; font-size: 13px; margin-top: 4px;">
+                                {% if mode == 'social' %}
+                                    ✨ New entries will be posted to social media automatically
+                                {% elif mode == 'local' %}
+                                    📚 New entries will be saved locally (no social posting)
+                                {% else %}
+                                    ⏳ New entries will be added to queue for manual posting
+                                {% endif %}
+                            </p>
+                        {% endif %}
                     </div>
                     <div class="rss-feed-actions">
+                        <form method="POST" action="{{ url_for('toggle_rss_auto_queue', feed_id=feed.id) }}" style="display: inline;">
+                            <button type="submit" class="btn" style="background: {% if feed.auto_queue %}#e4405f{% else %}#4a9d5f{% endif %}; color: white;">
+                                {% if feed.auto_queue %}Disable Auto{% else %}Enable Auto{% endif %}
+                            </button>
+                        </form>
+                        {% if feed.auto_queue %}
+                            <form method="POST" action="{{ url_for('cycle_rss_auto_post_mode', feed_id=feed.id) }}" style="display: inline;">
+                                {% set mode = feed.auto_post_mode or 'queue' %}
+                                <button type="submit" class="btn btn-primary" title="Click to cycle through: Queue → Social → Local">
+                                    {% if mode == 'social' %}
+                                        🚀 Social
+                                    {% elif mode == 'local' %}
+                                        📝 Local
+                                    {% else %}
+                                        📋 Queue
+                                    {% endif %}
+                                </button>
+                            </form>
+                        {% endif %}
                         <a href="{{ url_for('browse_rss', feed_id=feed.id) }}" class="btn btn-primary">Browse</a>
                         <form method="POST" action="{{ url_for('delete_rss', feed_id=feed.id) }}" style="display: inline;">
                             <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this feed?')">Delete</button>
@@ -53,4 +118,20 @@
         </p>
     {% endif %}
 </div>
+
+<script>
+function toggleAutoPostMode() {
+    const autoQueueCheckbox = document.getElementById('auto_queue');
+    const autoPostModeSection = document.getElementById('auto_post_mode_section');
+    
+    if (autoQueueCheckbox.checked) {
+        autoPostModeSection.style.display = 'block';
+    } else {
+        autoPostModeSection.style.display = 'none';
+    }
+}
+
+// Call on page load in case checkbox is pre-checked
+document.addEventListener('DOMContentLoaded', toggleAutoPostMode);
+</script>
 {% endblock %}

@@ -15,10 +15,15 @@
     
     {% if entries %}
         {% for entry in entries %}
-            <div class="rss-entry">
+            <div class="rss-entry" {% if entry.status %}style="opacity: 0.7;"{% endif %}>
                 <div class="rss-entry-header">
                     <h3 class="rss-entry-title">
                         <a href="{{ entry.link }}" target="_blank">{{ entry.title }}</a>
+                        {% if entry.status == 'posted' %}
+                            <span class="badge" style="background: #4a9d5f; margin-left: 8px; font-size: 11px;">✓ POSTED</span>
+                        {% elif entry.status == 'queued' %}
+                            <span class="badge" style="background: #5b7ec4; margin-left: 8px; font-size: 11px;">⏱ QUEUED</span>
+                        {% endif %}
                     </h3>
                     {% if entry.published %}
                         <span class="rss-entry-date">{{ entry.published }}</span>
@@ -35,30 +40,42 @@
                     <div class="rss-entry-author">By {{ entry.author }}</div>
                 {% endif %}
                 
-                <form method="POST" action="{{ url_for('add_rss_to_queue') }}" class="rss-entry-form">
-                    <input type="hidden" name="link" value="{{ entry.link }}">
-                    <input type="hidden" name="title" value="{{ entry.title }}">
-                    
-                    <div class="form-group" style="margin-top: 12px; margin-bottom: 12px;">
-                        <textarea name="commentary" placeholder="Add your commentary (optional)..." rows="2" style="width: 100%; padding: 8px; background: #3a3b3c; border: 1px solid #4a4b4c; border-radius: 6px; color: #e4e6eb; font-size: 14px; resize: vertical;"></textarea>
+                {% if entry.status %}
+                    <div style="margin-top: 12px; padding: 8px 12px; background: #2a2b2c; border-radius: 6px; border: 1px solid #3a3b3c;">
+                        <p style="color: #8a8d91; font-size: 13px; margin: 0;">
+                            {% if entry.status == 'posted' %}
+                                ℹ️ This link has already been posted to your timeline.
+                            {% elif entry.status == 'queued' %}
+                                ℹ️ This link is already in your posting queue.
+                            {% endif %}
+                        </p>
                     </div>
-                    
-                    <div style="margin-bottom: 12px;">
-                        <label style="display: flex; align-items: center; color: #b0b3b8; cursor: pointer; margin-bottom: 8px;">
-                            <input type="checkbox" name="post_now" style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
-                            Post immediately (unchecked = add to queue)
-                        </label>
-                        <label style="display: flex; align-items: center; color: #b0b3b8; cursor: pointer;">
-                            <input type="checkbox" name="local_only" style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
-                            Local only (don't share to Bluesky/Mastodon)
-                        </label>
-                    </div>
-                    
-                    <div style="display: flex; gap: 8px;">
-                        <button type="submit" class="btn btn-primary" style="font-size: 14px; padding: 6px 12px;">Post</button>
-                        <a href="{{ entry.link }}" target="_blank" class="btn" style="background: #3a3b3c; color: #5b7ec4; font-size: 14px; padding: 6px 12px;">🔗 Open Link</a>
-                    </div>
-                </form>
+                {% else %}
+                    <form method="POST" action="{{ url_for('add_rss_to_queue') }}" class="rss-entry-form">
+                        <input type="hidden" name="link" value="{{ entry.link }}">
+                        <input type="hidden" name="title" value="{{ entry.title }}">
+                        
+                        <div class="form-group" style="margin-top: 12px; margin-bottom: 12px;">
+                            <textarea name="commentary" placeholder="Add your commentary (optional)..." rows="2" style="width: 100%; padding: 8px; background: #3a3b3c; border: 1px solid #4a4b4c; border-radius: 6px; color: #e4e6eb; font-size: 14px; resize: vertical;"></textarea>
+                        </div>
+                        
+                        <div style="margin-bottom: 12px;">
+                            <label style="display: flex; align-items: center; color: #b0b3b8; cursor: pointer; margin-bottom: 8px;">
+                                <input type="checkbox" name="local_only" checked style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
+                                Local only (don't share to Bluesky/Mastodon)
+                            </label>
+                            <label style="display: flex; align-items: center; color: #b0b3b8; cursor: pointer;">
+                                <input type="checkbox" name="post_now" style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
+                                Post immediately (unchecked = add to queue)
+                            </label>
+                        </div>
+                        
+                        <div style="display: flex; gap: 8px;">
+                            <button type="submit" class="btn btn-primary" style="font-size: 14px; padding: 6px 12px;">Post</button>
+                            <a href="{{ entry.link }}" target="_blank" class="btn" style="background: #3a3b3c; color: #5b7ec4; font-size: 14px; padding: 6px 12px;">🔗 Open Link</a>
+                        </div>
+                    </form>
+                {% endif %}
             </div>
         {% endfor %}
     {% else %}

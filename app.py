@@ -16,6 +16,7 @@ import threading
 import time
 import sqlite3
 import feedparser
+import threading
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 from io import BytesIO
@@ -36,8 +37,9 @@ IMAGES_FOLDER = 'images'
 UPLOAD_FOLDER = 'static/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 DATABASE = 'microblog.db'
-
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+post_lock = threading.Lock()
+last_auto_post_time = time.time()
 
 # Flask app setup
 app = Flask(__name__)
@@ -66,12 +68,30 @@ def init_db():
                   password_hash TEXT NOT NULL,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     
-    # RSS feeds table
+    # RSS feeds table - UPDATED with auto_queue, auto_post_mode, and last_checked
     c.execute('''CREATE TABLE IF NOT EXISTS rss_feeds
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   url TEXT UNIQUE NOT NULL,
                   name TEXT,
+                  auto_queue INTEGER DEFAULT 0,
+                  auto_post_mode TEXT DEFAULT 'queue',
+                  last_checked TIMESTAMP,
                   added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # Migration: Add auto_post_mode column if it doesn't exist
+    try:
+        c.execute("SELECT auto_post_mode FROM rss_feeds LIMIT 1")
+    except sqlite3.OperationalError:
+        c.execute("ALTER TABLE rss_feeds ADD COLUMN auto_post_mode TEXT DEFAULT 'queue'")
+    
+    # RSS entries tracking table - NEW
+    c.execute('''CREATE TABLE IF NOT EXISTS rss_seen_entries
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  feed_id INTEGER NOT NULL,
+                  entry_link TEXT NOT NULL,
+                  seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(feed_id, entry_link),
+                  FOREIGN KEY(feed_id) REFERENCES rss_feeds(id) ON DELETE CASCADE)''')
     
     conn.commit()
     conn.close()
@@ -125,13 +145,83 @@ def user_exists():
     conn.close()
     return count > 0
 
+def is_duplicate_link(url):
+    """Check if a URL already exists in posted.txt or topost.txt"""
+    if not url:
+        return False
+    
+    # Normalize URL (remove trailing slashes, convert to lowercase for comparison)
+    normalized_url = url.rstrip('/').lower()
+    
+    # Check posted.txt
+    try:
+        with open(POSTED_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                parsed = parse_posted_line(line)
+                if parsed and parsed.get('url'):
+                    existing_url = parsed['url'].rstrip('/').lower()
+                    if existing_url == normalized_url:
+                        return True
+    except FileNotFoundError:
+        pass
+    
+    # Check topost.txt
+    try:
+        with open(TOPOST_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Parse the content to extract URL
+                parsed = parse_content(line)
+                if parsed['type'] == 'url':
+                    existing_url = parsed['url'].rstrip('/').lower()
+                    if existing_url == normalized_url:
+                        return True
+    except FileNotFoundError:
+        pass
+    
+    return False
+
+def get_link_status(url):
+    if not url:
+        return None
+    normalized_url = url.rstrip('/').lower()
+    try:
+        with open(POSTED_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                parsed = parse_posted_line(line)
+                if parsed and parsed.get('url'):
+                    if parsed['url'].rstrip('/').lower() == normalized_url:
+                        return 'posted'
+    except FileNotFoundError:
+        pass
+    try:
+        with open(TOPOST_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parsed = parse_content(line)
+                if parsed['type'] == 'url':
+                    if parsed['url'].rstrip('/').lower() == normalized_url:
+                        return 'queued'
+    except FileNotFoundError:
+        pass
+    return None
+
+
+
+
 # RSS feed functions
-def add_rss_feed(url, name=None):
+def add_rss_feed(url, name=None, auto_queue=False, auto_post_mode='queue'):
     """Add an RSS feed to the database"""
     conn = sqlite3.connect(DATABASE)
     c = conn.cursor()
     try:
-        c.execute('INSERT INTO rss_feeds (url, name) VALUES (?, ?)', (url, name))
+        c.execute('INSERT INTO rss_feeds (url, name, auto_queue, auto_post_mode) VALUES (?, ?, ?, ?)', 
+                  (url, name, 1 if auto_queue else 0, auto_post_mode))
         conn.commit()
         conn.close()
         return True
@@ -143,27 +233,69 @@ def get_rss_feeds():
     """Get all RSS feeds from the database"""
     conn = sqlite3.connect(DATABASE)
     c = conn.cursor()
-    c.execute('SELECT id, url, name FROM rss_feeds ORDER BY added_at DESC')
-    feeds = [{'id': row[0], 'url': row[1], 'name': row[2]} for row in c.fetchall()]
+    c.execute('SELECT id, url, name, auto_queue, auto_post_mode FROM rss_feeds ORDER BY added_at DESC')
+    feeds = [{'id': row[0], 'url': row[1], 'name': row[2], 'auto_queue': bool(row[3]), 
+              'auto_post_mode': row[4] if len(row) > 4 and row[4] else 'queue'} 
+             for row in c.fetchall()]
     conn.close()
     return feeds
 
-def delete_rss_feed(feed_id):
-    """Delete an RSS feed from the database"""
+def update_rss_feed_auto_queue(feed_id, auto_queue):
+    """Update the auto_queue setting for a feed"""
     conn = sqlite3.connect(DATABASE)
     c = conn.cursor()
-    c.execute('DELETE FROM rss_feeds WHERE id = ?', (feed_id,))
+    c.execute('UPDATE rss_feeds SET auto_queue = ? WHERE id = ?', 
+              (1 if auto_queue else 0, feed_id))
     conn.commit()
     conn.close()
 
+def update_rss_feed_auto_post_mode(feed_id, auto_post_mode):
+    """Update the auto_post_mode for a feed (queue, social, or local)"""
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    c.execute('UPDATE rss_feeds SET auto_post_mode = ? WHERE id = ?', 
+              (auto_post_mode, feed_id))
+    conn.commit()
+    conn.close()
+
+def update_rss_feed_last_checked(feed_id):
+    """Update the last_checked timestamp for a feed"""
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    c.execute('UPDATE rss_feeds SET last_checked = CURRENT_TIMESTAMP WHERE id = ?', (feed_id,))
+    conn.commit()
+    conn.close()
+
+def mark_rss_entry_seen(feed_id, entry_link):
+    """Mark an RSS entry as seen"""
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    try:
+        c.execute('INSERT INTO rss_seen_entries (feed_id, entry_link) VALUES (?, ?)', 
+                  (feed_id, entry_link))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        # Already seen
+        conn.close()
+        return False
+
+def is_rss_entry_seen(feed_id, entry_link):
+    """Check if an RSS entry has been seen"""
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM rss_seen_entries WHERE feed_id = ? AND entry_link = ?', 
+              (feed_id, entry_link))
+    count = c.fetchone()[0]
+    conn.close()
+    return count > 0
+
 def fetch_rss_entries(feed_url, limit=15):
-    """Fetch recent entries from an RSS feed"""
     try:
         feed = feedparser.parse(feed_url)
-        
         if feed.bozo and not feed.entries:
             return None, "Failed to parse RSS feed"
-        
         entries = []
         for entry in feed.entries[:limit]:
             entries.append({
@@ -173,10 +305,66 @@ def fetch_rss_entries(feed_url, limit=15):
                 'summary': entry.get('summary', ''),
                 'author': entry.get('author', '')
             })
-        
         return entries, None
     except Exception as e:
         return None, str(e)
+
+def check_and_queue_new_rss_entries():
+    """Check all auto-queue feeds for new entries and add them based on auto_post_mode"""
+    global last_auto_post_time
+    feeds = get_rss_feeds()
+    auto_queue_feeds = [f for f in feeds if f['auto_queue']]
+    
+    for feed in auto_queue_feeds:
+        try:
+            entries, error = fetch_rss_entries(feed['url'], limit=10)
+            
+            if error or not entries:
+                print(f"Error checking RSS feed {feed['name'] or feed['url']}: {error}")
+                continue
+            
+            new_entries_count = 0
+            auto_post_mode = feed.get('auto_post_mode', 'queue')
+            
+            for entry in entries:
+                if not entry.get('link'):
+                    continue
+                
+                # Check if we've seen this entry before
+                if not is_rss_entry_seen(feed['id'], entry['link']):
+                    content = f"{entry['link']}|{entry['title']}"
+                    
+                    if auto_post_mode == 'social':
+                        # Post directly to social media
+                        if post_to_social_media(content):
+                            add_to_posted(content)
+                            print(f"Auto-posted to socials from {feed['name'] or feed['url']}: {entry['title']}")
+                            last_auto_post_time = time.time()
+                        else:
+                            print(f"Failed to auto-post to socials: {entry['title']}")
+                    elif auto_post_mode == 'local':
+                        # Add directly to posted (local only)
+                        add_to_posted(content)
+                        print(f"Auto-posted locally from {feed['name'] or feed['url']}: {entry['title']}")
+                    else:
+                        # Default: add to queue
+                        with open(TOPOST_FILE, 'a', encoding='utf-8') as f:
+                            f.write(f"{content}\n")
+                        print(f"Auto-queued from {feed['name'] or feed['url']}: {entry['title']}")
+                    
+                    # Mark as seen
+                    mark_rss_entry_seen(feed['id'], entry['link'])
+                    new_entries_count += 1
+            
+            if new_entries_count > 0:
+                action = {'queue': 'queued', 'social': 'posted to socials', 'local': 'posted locally'}[auto_post_mode]
+                print(f"Auto-{action} {new_entries_count} new entries from {feed['name'] or feed['url']}")
+            
+            # Update last checked time
+            update_rss_feed_last_checked(feed['id'])
+        
+        except Exception as e:
+            print(f"Error processing RSS feed {feed['name'] or feed['url']}: {e}")
 
 # Login decorator
 def login_required(f):
@@ -253,7 +441,14 @@ def parse_posted_line(line):
     }
 
 def parse_content(content):
-    """Parse content to extract URL, image, and text"""
+    """Parse content to extract URL, image, and text
+    
+    FIXED: Now uses elif to prevent double parsing of image URLs
+    Priority order:
+    1. Image files (local files with image extensions)
+    2. URLs (http/https links, including image URLs)
+    3. Text (everything else)
+    """
     if '|' not in content:
         return {'type': 'text', 'text': content}
     
@@ -261,16 +456,20 @@ def parse_content(content):
     first_part = parts[0].strip()
     second_part = parts[1].strip()
     
-    # Check if URL
-    if first_part.startswith(('http://', 'https://', 'www.')):
-        return {'type': 'url', 'url': first_part, 'text': second_part}
-    
-    # Check if image
+    # Check if it's a local image file FIRST (no http/https prefix)
+    # This ensures local image files are properly identified
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff')
-    if any(first_part.lower().endswith(ext) for ext in image_extensions):
+    if not first_part.startswith(('http://', 'https://', 'www.')) and \
+       any(first_part.lower().endswith(ext) for ext in image_extensions):
         return {'type': 'image', 'image': first_part, 'text': second_part}
     
-    return {'type': 'text', 'text': content}
+    # Check if it's a URL (this includes image URLs from the web)
+    elif first_part.startswith(('http://', 'https://', 'www.')):
+        return {'type': 'url', 'url': first_part, 'text': second_part}
+    
+    # Otherwise it's just text
+    else:
+        return {'type': 'text', 'text': content}
 
 def get_posted_entries(page=1, per_page=20, search_query=None):
     """Get paginated posted entries with optional search"""
@@ -732,7 +931,7 @@ def add_to_posted(content):
                         img = img.crop((0, top, img.width, top + new_height))
                     
                     # Resize to exactly 300x200
-                    img = img.resize((300, 200), Image.Resampling.LANCZOS)
+                    img = img.resize((600, 400), Image.Resampling.LANCZOS)
                     
                     # Save
                     img.save(image_path, format='JPEG', quality=85)
@@ -766,67 +965,107 @@ def auto_poster_thread():
     while True:
         time.sleep(60)
         
-        if time.time() - last_auto_post_time >= 3600:
-            try:
-                with open(TOPOST_FILE, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                
-                if lines:
-                    line_to_post = lines[0].strip()
+        with post_lock:  # Acquire lock before checking/posting
+            if time.time() - last_auto_post_time >= 3600:
+                try:
+                    with open(TOPOST_FILE, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
                     
-                    if not line_to_post:
-                        remaining_lines = lines[1:]
-                        with open(TOPOST_FILE, 'w', encoding='utf-8') as f:
-                            f.writelines(remaining_lines)
-                        continue
-                    
-                    remaining_lines = lines[1:]
-                    
-                    if post_to_social_media(line_to_post):
-                        with open(TOPOST_FILE, 'w', encoding='utf-8') as f:
-                            f.writelines(remaining_lines)
+                    if lines:
+                        line_to_post = lines[0].strip()
                         
-                        add_to_posted(line_to_post)
-                        print(f"Auto-posted: {line_to_post}")
-                        last_auto_post_time = time.time()
-                    else:
-                        print(f"Failed to auto-post: {line_to_post}")
-            
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                print(f"Error in auto-poster: {e}")
+                        if not line_to_post:
+                            remaining_lines = lines[1:]
+                            with open(TOPOST_FILE, 'w', encoding='utf-8') as f:
+                                f.writelines(remaining_lines)
+                            continue
+                        
+                        remaining_lines = lines[1:]
+                        
+                        if post_to_social_media(line_to_post):
+                            # Remove from queue FIRST
+                            with open(TOPOST_FILE, 'w', encoding='utf-8') as f:
+                                f.writelines(remaining_lines)
+                            
+                            # Then add to posted
+                            add_to_posted(line_to_post)
+                            print(f"Auto-posted: {line_to_post}")
+                            last_auto_post_time = time.time()
+                        else:
+                            print(f"Failed to auto-post: {line_to_post}")
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    print(f"Error in auto-poster: {e}")
+
+def rss_checker_thread():
+    """Background thread that checks RSS feeds every 15 minutes"""
+    while True:
+        time.sleep(900)  # 15 minutes
+        try:
+            check_and_queue_new_rss_entries()
+        except Exception as e:
+            print(f"Error in RSS checker thread: {e}")
+
+def delete_rss_feed(feed_id):
+    """Delete an RSS feed from the database"""
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    c.execute('DELETE FROM rss_feeds WHERE id = ?', (feed_id,))
+    conn.commit()
+    conn.close()
 
 # Flask routes
+@app.route('/')
+def index():
+    """Main page with archive of posts"""
+    page = request.args.get('page', 1, type=int)
+    search = request.args.get('search', '')
+    
+    result = get_posted_entries(page=page, per_page=20, search_query=search if search else None)
+    queue = get_queue_entries()
+    
+    # Debug output
+    print(f"DEBUG: Found {len(result['entries'])} entries for page {page}")
+    if result['entries']:
+        print(f"DEBUG: First entry: {result['entries'][0]}")
+    
+    if 'user_id' in session:
+        return render_template('index.html', 
+                             entries=result['entries'],
+                             pagination=result,
+                             search=search,
+                             queue_count=len(queue))
+    else:
+        return render_template('index_public.html',
+                             entries=result['entries'],
+                             pagination=result,
+                             search=search)
+
 @app.route('/setup', methods=['GET', 'POST'])
 def setup():
-    """Initial setup page for creating admin user - only available if no users exist"""
+    """Initial setup page for creating admin user"""
     if user_exists():
-        flash('Setup already completed', 'error')
-        return redirect(url_for('login'))
+        return redirect(url_for('index'))
     
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
-        confirm_password = request.form.get('confirm_password', '').strip()
+        password_confirm = request.form.get('password_confirm', '').strip()
         
         if not username or not password:
             flash('Username and password are required', 'error')
             return render_template('setup.html')
         
-        if password != confirm_password:
+        if password != password_confirm:
             flash('Passwords do not match', 'error')
             return render_template('setup.html')
         
-        if len(password) < 8:
-            flash('Password must be at least 8 characters', 'error')
-            return render_template('setup.html')
-        
         if create_user(username, password):
-            flash('Admin account created successfully! Please log in.', 'success')
+            flash('Setup complete! Please log in.', 'success')
             return redirect(url_for('login'))
         else:
-            flash('Failed to create user', 'error')
+            flash('Error creating user', 'error')
     
     return render_template('setup.html')
 
@@ -844,7 +1083,6 @@ def login():
         password = request.form.get('password', '').strip()
         
         user = get_user(username)
-        
         if user and check_password_hash(user['password_hash'], password):
             session['user_id'] = user['id']
             session['username'] = user['username']
@@ -857,7 +1095,7 @@ def login():
 
 @app.route('/logout')
 def logout():
-    """Logout current user"""
+    """Logout"""
     session.clear()
     flash('Logged out successfully', 'success')
     return redirect(url_for('login'))
@@ -894,40 +1132,12 @@ def settings():
     
     return render_template('settings.html', settings=settings_data)
 
-@app.route('/')
-def index():
-    page = request.args.get('page', 1, type=int)
-    search = request.args.get('search', '')
-    
-    result = get_posted_entries(page=page, per_page=20, search_query=search if search else None)
-    queue = get_queue_entries()
-    
-    # Debug output
-    print(f"DEBUG: Found {len(result['entries'])} entries for page {page}")
-    if result['entries']:
-        print(f"DEBUG: First entry: {result['entries'][0]}")
-    
-    if 'user_id' in session:
-        return render_template('index.html', 
-                             entries=result['entries'],
-                             pagination=result,
-                             search=search,
-                             queue_count=len(queue))
-    else:
-        return render_template('index_public.html',
-                             entries=result['entries'],
-                             pagination=result,
-                             search=search)
-
-@app.route('/queue')
-@login_required
-def queue():
-    queue_entries = get_queue_entries()
-    return render_template('queue.html', queue=queue_entries)
-
 @app.route('/post', methods=['POST'])
 @login_required
 def create_post():
+    """Create a new post"""
+    global last_auto_post_time
+    
     try:
         text = request.form.get('text', '').strip()
         url = request.form.get('url', '').strip()
@@ -959,13 +1169,13 @@ def create_post():
             add_to_posted(content)
             flash('Posted locally!', 'success')
         elif post_now:
-            if post_to_social_media(content):
-                add_to_posted(content)
-                flash('Posted successfully!', 'success')
-                global last_auto_post_time
-                last_auto_post_time = time.time()
-            else:
-                flash('Failed to post to social media', 'error')
+            with post_lock:  # Acquire lock for manual posts too
+                if post_to_social_media(content):
+                    add_to_posted(content)
+                    flash('Posted successfully!', 'success')
+                    last_auto_post_time = time.time()
+                else:
+                    flash('Failed to post to social media', 'error')
         else:
             with open(TOPOST_FILE, 'a', encoding='utf-8') as f:
                 f.write(f"{content}\n")
@@ -977,9 +1187,17 @@ def create_post():
         flash(f'Error creating post: {str(e)}', 'error')
         return redirect(url_for('index'))
 
+@app.route('/queue')
+@login_required
+def queue():
+    """View posting queue"""
+    queue_entries = get_queue_entries()
+    return render_template('queue.html', queue=queue_entries)
+
 @app.route('/delete_queue/<int:index>', methods=['POST'])
 @login_required
 def delete_queue_item(index):
+    """Delete an item from the queue"""
     try:
         with open(TOPOST_FILE, 'r', encoding='utf-8') as f:
             lines = f.readlines()
@@ -1006,12 +1224,63 @@ def rss():
     feeds = get_rss_feeds()
     return render_template('rss.html', feeds=feeds)
 
+@app.route('/rss/toggle_auto_queue/<int:feed_id>', methods=['POST'])
+@login_required
+def toggle_rss_auto_queue(feed_id):
+    """Toggle auto-queue for an RSS feed"""
+    feeds = get_rss_feeds()
+    feed = next((f for f in feeds if f['id'] == feed_id), None)
+    
+    if not feed:
+        flash('RSS feed not found', 'error')
+        return redirect(url_for('rss'))
+    
+    # Toggle the setting
+    new_value = not feed['auto_queue']
+    update_rss_feed_auto_queue(feed_id, new_value)
+    
+    if new_value:
+        flash(f'Auto-queue enabled for {feed["name"] or "feed"}', 'success')
+    else:
+        flash(f'Auto-queue disabled for {feed["name"] or "feed"}', 'success')
+    
+    return redirect(url_for('rss'))
+
+@app.route('/rss/cycle_auto_post_mode/<int:feed_id>', methods=['POST'])
+@login_required
+def cycle_rss_auto_post_mode(feed_id):
+    """Cycle through auto-post modes: queue -> social -> local -> queue"""
+    feeds = get_rss_feeds()
+    feed = next((f for f in feeds if f['id'] == feed_id), None)
+    
+    if not feed:
+        flash('RSS feed not found', 'error')
+        return redirect(url_for('rss'))
+    
+    # Cycle through modes
+    current_mode = feed.get('auto_post_mode', 'queue')
+    mode_cycle = {'queue': 'social', 'social': 'local', 'local': 'queue'}
+    new_mode = mode_cycle.get(current_mode, 'queue')
+    
+    update_rss_feed_auto_post_mode(feed_id, new_mode)
+    
+    mode_labels = {
+        'queue': 'Queue Only',
+        'social': 'Auto-Post to Socials',
+        'local': 'Auto-Post Locally'
+    }
+    flash(f'Auto-post mode changed to: {mode_labels[new_mode]}', 'success')
+    
+    return redirect(url_for('rss'))
+
 @app.route('/rss/add', methods=['POST'])
 @login_required
 def add_rss():
     """Add a new RSS feed"""
     url = request.form.get('url', '').strip()
     name = request.form.get('name', '').strip()
+    auto_queue = request.form.get('auto_queue') == 'on'
+    auto_post_mode = request.form.get('auto_post_mode', 'queue')
     
     if not url:
         flash('RSS feed URL is required', 'error')
@@ -1022,7 +1291,7 @@ def add_rss():
         flash(f'Invalid RSS feed: {error}', 'error')
         return redirect(url_for('rss'))
     
-    if add_rss_feed(url, name):
+    if add_rss_feed(url, name, auto_queue, auto_post_mode):
         flash('RSS feed added successfully!', 'success')
     else:
         flash('RSS feed already exists', 'error')
@@ -1053,6 +1322,10 @@ def browse_rss(feed_id):
     if error:
         flash(f'Error fetching RSS feed: {error}', 'error')
         return redirect(url_for('rss'))
+    
+    # Add status to each entry
+    for entry in entries:
+        entry['status'] = get_link_status(entry.get('link'))
     
     return render_template('rss_browse.html', feed=feed, entries=entries)
 
@@ -1183,6 +1456,10 @@ if __name__ == "__main__":
     # Start auto-poster thread
     poster_thread = threading.Thread(target=auto_poster_thread, daemon=True)
     poster_thread.start()
+    
+    # Start RSS checker thread
+    rss_thread = threading.Thread(target=rss_checker_thread, daemon=True)
+    rss_thread.start()
     
     # Run Flask app
     app.run(debug=True, host='0.0.0.0', port=5000)
