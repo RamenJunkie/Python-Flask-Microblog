@@ -2,25 +2,21 @@
 
 Created using Claude.ai by @RamenJunkie
 
-A beautiful dark-mode microblog web application that automatically posts to Bluesky and Mastodon. Features a modern UI inspired by popular social media platforms with automatic scheduling and rich media support.
-
-![Dark Mode Interface](https://img.shields.io/badge/UI-Dark%20Mode-5b7ec4)
-![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)
-![Flask](https://img.shields.io/badge/flask-3.0.0-green.svg)
+A dark-mode microblog web application that automatically posts to Bluesky and Mastodon. Features a modern UI inspired by popular social media platforms with automatic scheduling and rich media support.
 
 ## Features
 
-✨ **Modern Dark Mode UI** - Beautiful, centered interface inspired by Bluesky/Mastodon
-👁️ **Public Timeline** - Anyone can view posts without logging in
-🔐 **Secure Admin Access** - Single admin account with password protection
-⚙️ **Settings Page** - Configure API credentials through web interface
-📡 **RSS Feed Integration** - Add RSS feeds and easily share articles with commentary
-📝 **Multi-Platform Posting** - Post to both Bluesky and Mastodon simultaneously
-🖼️ **Rich Media Support** - Images displayed inline, links with automatic metadata fetching
-⏰ **Automatic Scheduling** - Hourly auto-posting from queue
-🔍 **Searchable Archive** - Full-text search across all posts with pagination
-📱 **Responsive Design** - Works great on mobile and desktop
-💾 **SQLite Database** - Local database for settings and user management
+- Modern dark mode UI with centered interface
+- Public timeline viewable without logging in
+- Secure admin access with password protection
+- Web-based settings configuration for API credentials
+- RSS feed integration for sharing articles with commentary
+- Multi-platform posting to both Bluesky and Mastodon
+- Rich media support with inline images and automatic link metadata
+- Automatic hourly posting from queue
+- Searchable archive with full-text search and pagination
+- Responsive design for mobile and desktop
+- SQLite database for local settings and user management
 
 ## Quick Start
 
@@ -52,35 +48,29 @@ python app.py
 
 Visit `http://localhost:5000` in your browser. You'll be redirected to the setup page.
 
-#### Create Admin Account:
+**Create Admin Account:**
 1. Enter a username
 2. Enter a password (minimum 8 characters)
 3. Confirm your password
 4. Click "Create Admin Account"
 
-#### Configure API Credentials:
+**Configure API Credentials:**
 1. Log in with your admin account
 2. Click "Settings" in the navigation
 3. Enter your Bluesky credentials:
-   - **Bluesky Handle**: your-handle.bsky.social
-   - **Bluesky App Password**: Get from Bluesky Settings → App Passwords
+   - Bluesky Handle: your-handle.bsky.social
+   - Bluesky App Password: Get from Bluesky Settings → App Passwords
 4. Enter your Mastodon credentials:
-   - **Mastodon Instance URL**: https://your-instance.social
-   - **Mastodon Access Token**: Get from Settings → Development → New Application
+   - Mastodon Instance URL: https://your-instance.social
+   - Mastodon Access Token: Get from Settings → Development → New Application
 5. Click "Save Settings"
 
-Now you're ready to start posting! = 'your-access-token'
-
-# Also update the secret key
-app.config['SECRET_KEY'] = 'your-random-secret-key-here'
-```
-
-#### Getting Bluesky Credentials:
+**Getting Bluesky Credentials:**
 1. Go to Bluesky Settings → App Passwords
 2. Create a new app password
 3. Use your handle and the generated password
 
-#### Getting Mastodon Credentials:
+**Getting Mastodon Credentials:**
 1. Go to your Mastodon instance Settings → Development
 2. Create a new application with `write:statuses` and `write:media` permissions
 3. Copy the access token
@@ -124,15 +114,13 @@ flask-microblog/
 
 ### First Time Setup
 
-1. **Create Admin Account** - On first run, you'll be prompted to create an admin account
-   - **Note**: Only ONE admin account can be created during initial setup
-   - After setup is complete, the setup page is no longer accessible
-2. **Configure Credentials** - Go to Settings and enter your Bluesky and Mastodon API credentials
-3. **Start Posting** - You're ready to go!
+1. **Create Admin Account** - On first run, you'll be prompted to create an admin account. Only one admin account can be created during initial setup. After setup is complete, the setup page is no longer accessible.
+2. **Configure Credentials** - Go to Settings and enter your Bluesky and Mastodon API credentials.
+3. **Start Posting** - You're ready to go.
 
 ### Public Access
 
-- **Anyone can view** the timeline without logging in
+- Anyone can view the timeline without logging in
 - Visitors see all posts with images and links
 - Search functionality available to all
 - Only logged-in admin can create posts, manage queue, or change settings
@@ -140,14 +128,14 @@ flask-microblog/
 ### Managing Credentials
 
 All API credentials are stored securely in the local SQLite database:
-- Navigate to **Settings** in the top menu
+- Navigate to Settings in the top menu
 - Update your Bluesky or Mastodon credentials anytime
 - Passwords are stored securely using industry-standard hashing
 
 ### Creating Posts
 
 **Text Post:**
-- Just enter your text in the main field
+- Enter your text in the main field
 - Check "Post immediately" to post right away
 - Uncheck to add to the hourly queue
 - Check "Local only" to add to timeline without posting to social networks
@@ -162,12 +150,12 @@ All API credentials are stored securely in the local SQLite database:
 - Enter caption text
 - Upload an image file (JPG, PNG, GIF, WebP)
 - Image is stored locally and posted to both platforms (unless local only)
-- **Images are displayed inline** in the timeline for all visitors
+- Images are displayed inline in the timeline for all visitors
 
 **Local-Only Posts:**
 - Check the "Local only" checkbox
 - Post appears in your timeline immediately
-- Does NOT get posted to Bluesky or Mastodon
+- Does not get posted to Bluesky or Mastodon
 - Perfect for personal notes or drafts you want to keep locally
 
 ### Queue Management
@@ -308,7 +296,7 @@ sudo certbot --nginx -d yourdomain.com
 
 ## Security Best Practices
 
-### 1. Use Environment Variables
+### Use Environment Variables
 
 Instead of hardcoding credentials in `app.py`, use environment variables:
 
@@ -332,21 +320,14 @@ export MASTODON_ACCESS_TOKEN='your-access-token'
 export SECRET_KEY='your-random-secret-key'
 ```
 
-### 2. File Permissions
-
-### 3. File Permissions
+### File Permissions
 
 ```bash
 chmod 600 topost.txt posted.txt microblog.db
 chmod 700 images/
 ```
 
-### 4. Firewall Configuration
-
-```bash
-sudo ufw allow 5000/tcp  # If exposing directly
-# Or only allow nginx
-### 4. Firewall Configuration
+### Firewall Configuration
 
 ```bash
 sudo ufw allow 5000/tcp  # If exposing directly
@@ -354,7 +335,7 @@ sudo ufw allow 5000/tcp  # If exposing directly
 sudo ufw allow 'Nginx Full'
 ```
 
-### 5. Regular Updates
+### Regular Updates
 
 ```bash
 pip install --upgrade -r requirements.txt
@@ -364,14 +345,17 @@ pip install --upgrade -r requirements.txt
 
 ### Cannot Access Application
 
-**Issue**: Redirected to setup page when user already exists
-- **Solution**: Navigate directly to `/login` or delete `microblog.db` to start fresh
+**Issue:** Redirected to setup page when user already exists
+
+**Solution:** Navigate directly to `/login` or delete `microblog.db` to start fresh
 
 ### Forgot Admin Password
 
-**Issue**: Cannot log in to the application
-- **Solution**: Delete `microblog.db` to reset (Note: This will also delete your API credentials)
-- **Better Solution**: Add a password reset feature or create a new admin via Python:
+**Issue:** Cannot log in to the application
+
+**Solution:** Delete `microblog.db` to reset (Note: This will also delete your API credentials)
+
+**Better Solution:** Add a password reset feature or create a new admin via Python:
 
 ```python
 import sqlite3
@@ -387,23 +371,28 @@ conn.close()
 
 ### RSS Feeds Not Loading
 
-**Issue**: Cannot fetch RSS feed entries
-- **Solution**: Verify the RSS feed URL is correct and accessible
+**Issue:** Cannot fetch RSS feed entries
+
+**Solution:**
+- Verify the RSS feed URL is correct and accessible
 - Check if the feed is valid RSS/Atom format
 - Test the feed URL in an RSS reader first
 - Check console for feedparser errors
 
 ### Cannot Add RSS Feed
 
-**Issue**: "Invalid RSS feed" error
-- **Solution**: Ensure the URL points to an actual RSS/Atom feed (usually ends in .xml, .rss, or /feed)
+**Issue:** "Invalid RSS feed" error
+
+**Solution:**
+- Ensure the URL points to an actual RSS/Atom feed (usually ends in .xml, .rss, or /feed)
 - Some sites have RSS feeds at `/feed`, `/rss`, or `/atom`
 - Check if the site blocks automated requests
 
 ### RSS Entries Show Wrong Date
 
-**Issue**: Published dates appear incorrect
-- **Solution**: This is the date from the feed itself - contact the feed publisher if incorrect
+**Issue:** Published dates appear incorrect
+
+**Solution:** This is the date from the feed itself - contact the feed publisher if incorrect
 
 ### Posts Not Appearing on Social Media
 
@@ -441,17 +430,17 @@ python app.py --port 5001
 
 ## Dependencies
 
-- **Flask 3.0.0** - Web framework
-- **atproto 0.0.46** - Bluesky API client
-- **Mastodon.py 1.8.1** - Mastodon API client
-- **requests 2.31.0** - HTTP library
-- **beautifulsoup4 4.12.2** - HTML parsing for metadata
-- **Pillow 10.1.0** - Image processing
-- **feedparser 6.0.10** - RSS/Atom feed parsing
+- Flask 3.0.0 - Web framework
+- atproto 0.0.46 - Bluesky API client
+- Mastodon.py 1.8.1 - Mastodon API client
+- requests 2.31.0 - HTTP library
+- beautifulsoup4 4.12.2 - HTML parsing for metadata
+- Pillow 10.1.0 - Image processing
+- feedparser 6.0.10 - RSS/Atom feed parsing
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. Please feel free to submit a Pull Request.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
@@ -475,7 +464,3 @@ For issues, questions, or suggestions:
 - Open an issue on GitHub
 - Check existing issues for solutions
 - Review the troubleshooting section above
-
----
-
-**Happy Posting! 🚀**
