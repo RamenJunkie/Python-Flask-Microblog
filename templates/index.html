@@ -78,7 +78,7 @@
                                 {% endif %}
                                 
                                 {% if entry.commentary %}
-                                    <div style="margin-top: 8px;">{{ entry.commentary }}</div>
+                                    <div style="margin-top: 8px;">{{ entry.commentary|nl2br }}</div>
                                 {% endif %}
                             </div>
                         {% elif entry.image %}
@@ -87,12 +87,23 @@
                                 <img src="/images/{{ entry.image }}" alt="Post image">
                             </div>
                             {% if entry.commentary %}
-                                <div class="content">{{ entry.commentary }}</div>
+                                <div class="content">{{ entry.commentary|nl2br }}</div>
                             {% endif %}
                         {% elif entry.commentary %}
                             {# Text only post #}
-                            <div class="content">{{ entry.commentary }}</div>
+                            <div class="content">{{ entry.commentary|nl2br }}</div>
                         {% endif %}
+
+                        <details style="margin-top: 10px;">
+                            <summary style="cursor: pointer; font-size: 13px; color: #b0b3b8;">✏️ Edit note</summary>
+                            <form method="POST" action="{{ url_for('edit_posted', entry_id=entry.id) }}" style="margin-top: 8px;">
+                                <div class="form-group">
+                                    <textarea name="commentary" rows="3">{{ entry.commentary or '' }}</textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Save</button>
+                            </form>
+                        </details>
+
                     </div>
                 {% endfor %}
         

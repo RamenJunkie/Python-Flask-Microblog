@@ -21,12 +21,11 @@ def parse_date(line):
 
 def extract_url(line):
     """Extract the URL from a line (second field after splitting by |)."""
-    try:
-        parts = line.split('|')
-        if len(parts) >= 2:
-            return parts[1].strip()
-    except:
-        pass
+    parts = line.split('|')
+    if len(parts) >= 2:
+        url = parts[1].strip()
+        if url and url != 'NULL':
+            return url.rstrip('/').lower()
     return None
 
 def sort_markdown_file(input_file, output_file=None):
@@ -70,7 +69,7 @@ def sort_markdown_file(input_file, output_file=None):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python sort_markdown.py <input_file> [output_file]")
+        print("Usage: python PostedLinesDateSort.py <input_file> [output_file]")
         print("  If output_file is not specified, input file will be overwritten")
         sys.exit(1)
     

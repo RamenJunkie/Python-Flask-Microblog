@@ -110,12 +110,14 @@
         }
 
         .content .description {
+            white-space: pre-line;
             margin-top: 8px;
             color: #b0b3b8;
             font-size: 14px;
         }
 
         .content .comment {
+            white-space: pre-line;
             margin-top: 8px;
         }
 
@@ -201,6 +203,8 @@
             }
         }
     </style>
+    <!-- Optional: drop a style.css next to this file to override the styling above -->
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="header">
@@ -243,7 +247,9 @@
                 const lines = text.split('\n').filter(line => line.trim());
                 
                 if (lines.length > 0) {
-                    document.getElementById('blog-title').textContent = lines[0].trim();
+                    const title = lines[0].trim();
+                    document.getElementById('blog-title').textContent = title;
+                    document.title = title;
                 }
 
                 const socialLinksContainer = document.getElementById('social-links');
@@ -251,20 +257,22 @@
 
                 for (let i = 1; i < lines.length; i++) {
                     const line = lines[i].trim();
-                    
-                    if (line.startsWith('Footer |')) {
-                        const footerText = line.substring(7).trim();
-                        document.getElementById('footer').innerHTML = `<p>${footerText}</p>`;
-                    } else if (line.includes('|')) {
-                        const [text, url] = line.split('|').map(s => s.trim());
-                        if (text && url) {
-                            const link = document.createElement('a');
-                            link.href = url;
-                            link.textContent = text;
-                            link.target = '_blank';
-                            link.rel = 'noopener noreferrer';
-                            socialLinksContainer.appendChild(link);
-                        }
+                    const pipe = line.indexOf('|');
+                    if (pipe === -1) continue;
+
+                    const left = line.substring(0, pipe).trim();
+                    const right = line.substring(pipe + 1).trim();
+
+                    if (left.toLowerCase() === 'footer') {
+                        // HTML is allowed here on purpose, so you can put a link in your footer
+                        document.getElementById('footer').innerHTML = `<p>${right}</p>`;
+                    } else if (left && right) {
+                        const link = document.createElement('a');
+                        link.href = right;
+                        link.textContent = left;
+                        link.target = '_blank';
+                        link.rel = 'noopener noreferrer';
+                        socialLinksContainer.appendChild(link);
                     }
                 }
             } catch (error) {
@@ -274,9 +282,16 @@
             }
         }
 
+        // posted.txt stores empty fields as NULL and line breaks as the return symbol
+        function clean(value) {
+            const s = (value || '').trim();
+            if (!s || s === 'NULL') return null;
+            return s.replace(/\u23ce/g, '\n');
+        }
+
         async function loadPosts() {
             try {
-                const response = await fetch('posted.txt');
+                const response = await fetch('posted.txt', { cache: 'no-cache' });
                 if (!response.ok) throw new Error('Could not load posted.txt');
                 
                 const text = await response.text();
@@ -290,17 +305,22 @@
                         
                         return {
                             datetime,
-                            url: parts[0] || null,
-                            title: parts[1] || null,
-                            image: parts[2] || null,
-                            description: parts[3] || null,
-                            comment: parts[4] || null
+                            url: clean(parts[0]),
+                            title: clean(parts[1]),
+                            image: clean(parts[2]),
+                            description: clean(parts[3]),
+                            comment: clean(parts[4])
                         };
                     }
                     return null;
                 }).filter(post => post !== null);
 
                 allPosts.reverse();
+
+                if (allPosts.length === 0) {
+                    document.getElementById('content').innerHTML = '<div class="loading">No posts yet.</div>';
+                    return;
+                }
                 
                 totalPages = Math.ceil(allPosts.length / POSTS_PER_PAGE);
                 displayPage(1);
@@ -334,7 +354,7 @@
                 timestamp.textContent = formatDate(post.datetime);
                 postEntry.appendChild(timestamp);
 
-                if (post.image && post.image !== 'NULL') {
+                if (post.image) {
                     const imageDiv = document.createElement('div');
                     imageDiv.className = 'post-entry-image';
                     const img = document.createElement('img');
@@ -347,11 +367,11 @@
                 const contentDiv = document.createElement('div');
                 contentDiv.className = 'content';
 
-                if (post.url && post.title) {
+                if (post.url && /^https?:\/\//i.test(post.url)) {
                     const strong = document.createElement('strong');
                     const link = document.createElement('a');
                     link.href = post.url;
-                    link.textContent = decodeHtmlEntities(post.title);
+                    link.textContent = decodeHtmlEntities(post.title || post.url);
                     link.target = '_blank';
                     link.rel = 'noopener noreferrer';
                     strong.appendChild(link);
@@ -359,14 +379,14 @@
                     contentDiv.appendChild(document.createElement('br'));
                 }
 
-                if (post.description && post.description !== 'NULL') {
+                if (post.description) {
                     const descDiv = document.createElement('div');
                     descDiv.className = 'description';
                     descDiv.textContent = decodeHtmlEntities(post.description);
                     contentDiv.appendChild(descDiv);
                 }
 
-                if (post.comment && post.comment !== 'NULL') {
+                if (post.comment) {
                     const commentDiv = document.createElement('div');
                     commentDiv.className = 'comment';
                     commentDiv.textContent = decodeHtmlEntities(post.comment);

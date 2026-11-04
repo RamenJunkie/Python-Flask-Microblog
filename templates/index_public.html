@@ -79,7 +79,7 @@
                                 {% endif %}
                                 
                                 {% if entry.commentary %}
-                                    <div style="margin-top: 8px;">{{ entry.commentary }}</div>
+                                    <div style="margin-top: 8px;">{{ entry.commentary|nl2br }}</div>
                                 {% endif %}
                             </div>
                         {% elif entry.image %}
@@ -88,11 +88,11 @@
                                 <img src="/images/{{ entry.image }}" alt="Post image">
                             </div>
                             {% if entry.commentary %}
-                                <div class="content">{{ entry.commentary }}</div>
+                                <div class="content">{{ entry.commentary|nl2br }}</div>
                             {% endif %}
                         {% elif entry.commentary %}
                             {# Text only post #}
-                            <div class="content">{{ entry.commentary }}</div>
+                            <div class="content">{{ entry.commentary|nl2br }}</div>
                         {% endif %}
                     </div>
                 {% endfor %}

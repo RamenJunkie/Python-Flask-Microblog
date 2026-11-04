@@ -16,7 +16,12 @@ import threading
 import time
 import sqlite3
 import feedparser
-import threading
+import fcntl
+import secrets
+import hmac
+import hashlib
+from datetime import datetime, timedelta
+from contextlib import contextmanager
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 from io import BytesIO
@@ -43,9 +48,12 @@ last_auto_post_time = time.time()
 
 # Flask app setup
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'change-this-secret-key-in-production')
+app.config['SECRET_KEY'] = os.getenv('MICROBLOG_SECRET_KEY', 'change-this-secret-key-in-production')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=90)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Ensure directories exist
 os.makedirs(IMAGES_FOLDER, exist_ok=True)
@@ -336,10 +344,12 @@ def check_and_queue_new_rss_entries():
                     
                     if auto_post_mode == 'social':
                         # Post directly to social media
-                        if post_to_social_media(content):
-                            add_to_posted(content)
+                        result = post_once(content)
+                        if result == 'posted':
                             print(f"Auto-posted to socials from {feed['name'] or feed['url']}: {entry['title']}")
                             last_auto_post_time = time.time()
+                        elif result == 'duplicate':
+                            print(f"Skipped (already posted): {entry['title']}")
                         else:
                             print(f"Failed to auto-post to socials: {entry['title']}")
                     elif auto_post_mode == 'local':
@@ -348,9 +358,10 @@ def check_and_queue_new_rss_entries():
                         print(f"Auto-posted locally from {feed['name'] or feed['url']}: {entry['title']}")
                     else:
                         # Default: add to queue
-                        with open(TOPOST_FILE, 'a', encoding='utf-8') as f:
-                            f.write(f"{content}\n")
-                        print(f"Auto-queued from {feed['name'] or feed['url']}: {entry['title']}")
+                        if queue_once(content):
+                            print(f"Auto-queued from {feed['name'] or feed['url']}: {entry['title']}")
+                        else:
+                            print(f"Skipped (already posted/queued): {entry['title']}")
                     
                     # Mark as seen
                     mark_rss_entry_seen(feed['id'], entry['link'])
@@ -400,6 +411,10 @@ last_auto_post_time = time.time()
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def line_id(line):
+    """Stable short ID for a posted.txt line"""
+    return hashlib.sha1(line.strip().encode('utf-8')).hexdigest()[:12]
+
 def parse_posted_line(line):
     """Parse a line from posted.txt - new pipe-delimited format only"""
     if not line.strip():
@@ -433,11 +448,12 @@ def parse_posted_line(line):
     return {
         'timestamp': timestamp,
         'url': parts[0].strip() if parts[0].strip() and parts[0].strip() != 'NULL' else None,
-        'headline': parts[1].strip() if parts[1].strip() and parts[1].strip() != 'NULL' else None,
+        'headline': decode_nl(parts[1].strip()) if parts[1].strip() and parts[1].strip() != 'NULL' else None,
         'image': parts[2].strip() if parts[2].strip() and parts[2].strip() != 'NULL' else None,
-        'summary': parts[3].strip() if parts[3].strip() and parts[3].strip() != 'NULL' else None,
-        'commentary': parts[4].strip() if parts[4].strip() and parts[4].strip() != 'NULL' else None,
-        'raw': line
+        'summary': decode_nl(parts[3].strip()) if parts[3].strip() and parts[3].strip() != 'NULL' else None,
+        'commentary': decode_nl(parts[4].strip()) if parts[4].strip() and parts[4].strip() != 'NULL' else None,
+        'raw': line,
+        'id': line_id(line)
     }
 
 def parse_content(content):
@@ -449,6 +465,7 @@ def parse_content(content):
     2. URLs (http/https links, including image URLs)
     3. Text (everything else)
     """
+    content = decode_nl(content)
     if '|' not in content:
         return {'type': 'text', 'text': content}
     
@@ -865,9 +882,170 @@ def post_to_social_media(content):
         traceback.print_exc()
         return False
 
-def add_to_posted(content):
+# --- Line-break support -----------------------------------------------------
+# posted.txt / topost.txt are one-post-per-line, so real newlines are stored
+# as NL_TOKEN on disk and turned back into real newlines when read.
+NL_TOKEN = '\u23ce'  # the return symbol
+
+def encode_nl(text):
+    if not text:
+        return text
+    return text.replace('\r\n', '\n').replace('\r', '\n').replace('\n', NL_TOKEN)
+
+def decode_nl(text):
+    if not text:
+        return text
+    return text.replace(NL_TOKEN, '\n')
+
+@app.template_filter('nl2br')
+def nl2br_filter(text):
+    """Jinja filter: {{ entry.commentary|nl2br }} (HTML-escapes, then adds <br>)"""
+    from markupsafe import Markup, escape
+    return Markup(str(escape(text or '')).replace('\n', '<br>\n'))
+
+POST_LOCK_FILE = '.post.lock'
+
+@contextmanager
+def posting_lock():
+    """flock-based lock: works across threads AND across processes,
+    so two copies of the app can never post at the same moment."""
+    with open(POST_LOCK_FILE, 'w') as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+def _norm_url(url):
+    return url.strip().rstrip('/').lower()
+
+def link_already_posted(content):
+    """True if the URL in this content is already in posted.txt"""
+    parsed = parse_content(content)
+    if parsed['type'] != 'url':
+        return False
+    target = _norm_url(parsed['url'])
+    try:
+        with open(POSTED_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                p = parse_posted_line(line)
+                if p and p.get('url') and _norm_url(p['url']) == target:
+                    return True
+    except FileNotFoundError:
+        pass
+    return False
+
+def post_once(content):
+    """Post to socials + record in posted.txt, but never the same link twice.
+    Returns 'posted', 'duplicate', or 'failed'."""
+    with posting_lock():
+        if link_already_posted(content):
+            return 'duplicate'
+        if not post_to_social_media(content):
+            return 'failed'
+        add_to_posted(content)
+        return 'posted'
+
+def queue_once(content):
+    """Append to topost.txt unless the link is already posted or queued."""
+    parsed = parse_content(content)
+    if parsed['type'] == 'url' and is_duplicate_link(parsed['url']):
+        return False
+    with open(TOPOST_FILE, 'a', encoding='utf-8') as f:
+        f.write(f"{encode_nl(content)}\n")
+    return True
+
+def insert_posted_line(line, ts):
+    """Insert a line into posted.txt after the last entry dated <= ts (keeps file in date order)"""
+    try:
+        with open(POSTED_FILE, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+    if lines and not lines[-1].endswith('\n'):
+        lines[-1] += '\n'
+    idx = 0
+    for i in range(len(lines) - 1, -1, -1):
+        p = parse_posted_line(lines[i])
+        if p and p['timestamp'] <= ts:
+            idx = i + 1
+            break
+    lines.insert(idx, line)
+    tmp = POSTED_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.writelines(lines)
+    os.replace(tmp, POSTED_FILE)
+
+def update_posted_commentary(entry_id, new_text):
+    """Rewrite just the commentary field of one posted.txt entry. Returns True on success."""
+    new_text = (new_text or '').replace('|', '-').strip()
+    commentary = encode_nl(new_text) if new_text else 'NULL'
+    with posting_lock():
+        try:
+            with open(POSTED_FILE, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            return False
+        for i, line in enumerate(lines):
+            if line.strip() and line_id(line) == entry_id:
+                if not parse_posted_line(line):
+                    return False
+                bracket_end = line.find(']')
+                ts = line[1:bracket_end]
+                parts = line[bracket_end + 1:].strip().split('|')[1:]
+                while len(parts) < 5:
+                    parts.append('NULL')
+                parts[4] = commentary
+                lines[i] = f"[{ts}]|{'|'.join(parts)}\n"
+                tmp = POSTED_FILE + '.tmp'
+                with open(tmp, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+                os.replace(tmp, POSTED_FILE)
+                return True
+    return False
+
+def parse_api_timestamp(date_str, time_str=None):
+    """'YYYY-MM-DD' (+ optional time) -> datetime. No time given = 00:00:00."""
+    date_str = (date_str or '').strip()
+    if not date_str:
+        return None
+    dt = None
+    used = None
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M:%S',
+                '%Y-%m-%dT%H:%M', '%Y-%m-%d'):
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            used = fmt
+            break
+        except ValueError:
+            continue
+    if dt is None:
+        raise ValueError("date must look like YYYY-MM-DD (optional time HH:MM[:SS])")
+    if used == '%Y-%m-%d' and time_str and str(time_str).strip():
+        for tfmt in ('%H:%M:%S', '%H:%M'):
+            try:
+                t = datetime.strptime(str(time_str).strip(), tfmt)
+                return dt.replace(hour=t.hour, minute=t.minute, second=t.second)
+            except ValueError:
+                continue
+        raise ValueError("time must look like HH:MM or HH:MM:SS")
+    return dt
+
+def get_api_key():
+    """API key: MICROBLOG_API_KEY env var, else DB setting (auto-generated once)."""
+    key = os.getenv('MICROBLOG_API_KEY') or get_setting('api_key')
+    if not key:
+        key = secrets.token_urlsafe(32)
+        set_setting('api_key', key)
+        print(f"Generated new API key: {key}")
+    return key
+
+def add_to_posted(content, post_time=None):
     """Add entry to posted.txt with timestamp and metadata"""
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if link_already_posted(content):
+        print(f"Skipping duplicate link (already in posted.txt): {content}")
+        return False
+    timestamp = (post_time or datetime.now()).strftime('%Y-%m-%d %H:%M:%S')
     
     # Parse the content
     parsed = parse_content(content)
@@ -950,12 +1128,21 @@ def add_to_posted(content):
         # Text only
         commentary = parsed['text'].replace('|', '-') if parsed['text'] else 'NULL'
     
+    # Keep each post on one line
+    headline = encode_nl(headline)
+    summary = encode_nl(summary)
+    commentary = encode_nl(commentary)
+    
     # Build the pipe-delimited line
     # Format: [DATETIME]|url|headline|imageFilename|summary|commentary
     line = f"[{timestamp}]|{url}|{headline}|{image_filename}|{summary}|{commentary}\n"
     
-    with open(POSTED_FILE, 'a', encoding='utf-8') as f:
-        f.write(line)
+    if post_time is not None:
+        insert_posted_line(line, post_time)
+    else:
+        with open(POSTED_FILE, 'a', encoding='utf-8') as f:
+            f.write(line)
+    return True
 
 # Scheduled posting thread
 def auto_poster_thread():
@@ -982,15 +1169,16 @@ def auto_poster_thread():
                         
                         remaining_lines = lines[1:]
                         
-                        if post_to_social_media(line_to_post):
-                            # Remove from queue FIRST
+                        result = post_once(line_to_post)
+                        if result in ('posted', 'duplicate'):
+                            # Either way it leaves the queue
                             with open(TOPOST_FILE, 'w', encoding='utf-8') as f:
                                 f.writelines(remaining_lines)
-                            
-                            # Then add to posted
-                            add_to_posted(line_to_post)
-                            print(f"Auto-posted: {line_to_post}")
-                            last_auto_post_time = time.time()
+                            if result == 'posted':
+                                print(f"Auto-posted: {line_to_post}")
+                                last_auto_post_time = time.time()
+                            else:
+                                print(f"Dropped from queue (already posted): {line_to_post}")
                         else:
                             print(f"Failed to auto-post: {line_to_post}")
                 except FileNotFoundError:
@@ -1084,6 +1272,7 @@ def login():
         
         user = get_user(username)
         if user and check_password_hash(user['password_hash'], password):
+            session.permanent = True
             session['user_id'] = user['id']
             session['username'] = user['username']
             flash('Logged in successfully!', 'success')
@@ -1099,6 +1288,15 @@ def logout():
     session.clear()
     flash('Logged out successfully', 'success')
     return redirect(url_for('login'))
+
+@app.route('/edit_posted/<entry_id>', methods=['POST'])
+@login_required
+def edit_posted(entry_id):
+    if update_posted_commentary(entry_id, request.form.get('commentary', '')):
+        flash('Note updated', 'success')
+    else:
+        flash('Could not find that entry (file may have changed), try again', 'error')
+    return redirect(request.referrer or url_for('index'))
 
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
@@ -1170,16 +1368,19 @@ def create_post():
             flash('Posted locally!', 'success')
         elif post_now:
             with post_lock:  # Acquire lock for manual posts too
-                if post_to_social_media(content):
-                    add_to_posted(content)
+                result = post_once(content)
+                if result == 'posted':
                     flash('Posted successfully!', 'success')
                     last_auto_post_time = time.time()
+                elif result == 'duplicate':
+                    flash('That link was already posted, skipped', 'error')
                 else:
                     flash('Failed to post to social media', 'error')
         else:
-            with open(TOPOST_FILE, 'a', encoding='utf-8') as f:
-                f.write(f"{content}\n")
-            flash('Added to queue', 'success')
+            if queue_once(content):
+                flash('Added to queue', 'success')
+            else:
+                flash('That link is already posted or queued, skipped', 'error')
         
         return redirect(url_for('index'))
     
@@ -1352,17 +1553,20 @@ def add_rss_to_queue():
         add_to_posted(content)
         flash('Posted locally!', 'success')
     elif post_now:
-        if post_to_social_media(content):
-            add_to_posted(content)
+        result = post_once(content)
+        if result == 'posted':
             flash('Posted successfully!', 'success')
             global last_auto_post_time
             last_auto_post_time = time.time()
+        elif result == 'duplicate':
+            flash('That link was already posted, skipped', 'error')
         else:
             flash('Failed to post to social media', 'error')
     else:
-        with open(TOPOST_FILE, 'a', encoding='utf-8') as f:
-            f.write(f"{content}\n")
-        flash('Added to queue!', 'success')
+        if queue_once(content):
+            flash('Added to queue!', 'success')
+        else:
+            flash('That link is already posted or queued, skipped', 'error')
     
     return redirect(request.referrer or url_for('rss'))
 
@@ -1428,7 +1632,8 @@ def generate_digest():
             
             # Personal commentary (if available)
             if entry.get('commentary'):
-                card_html += f'<p><span class="link_list_summary_title">Personal Notes and Commentary:</span> <span class="link_list_summary">"{entry["commentary"]}"</span></p>'
+                commentary_html = entry["commentary"].replace('\n', '<br>\n')
+                card_html += f'<p><span class="link_list_summary_title">Personal Notes and Commentary:</span> <span class="link_list_summary">"{commentary_html}"</span></p>'
             
             card_html += '</div>\n'
             html_parts.append(card_html)
@@ -1446,6 +1651,70 @@ def generate_digest():
     
     return response
 
+@app.route('/api/key')
+@login_required
+def show_api_key():
+    """Logged-in users can view the API key here"""
+    return jsonify({'api_key': get_api_key()})
+
+@app.route('/api/post', methods=['POST'])
+def api_post():
+    """Simple input API. Header: X-API-Key. JSON or multipart (multipart for images).
+    Fields: text, url, image (file), date (YYYY-MM-DD), time (optional HH:MM[:SS]).
+    No date -> queued in topost.txt. Date -> inserted into posted.txt in date order (local only)."""
+    supplied = request.headers.get('X-API-Key', '')
+    if not supplied or not hmac.compare_digest(supplied, get_api_key()):
+        return jsonify({'error': 'invalid or missing API key'}), 401
+
+    data = request.get_json(silent=True) if request.is_json else request.form
+    data = data or {}
+    text = (data.get('text') or '').strip()
+    url = (data.get('url') or '').strip()
+    file = request.files.get('image')
+    has_image = bool(file and file.filename)
+
+    if not (text or url or has_image):
+        return jsonify({'error': 'need at least one of: text, url, image'}), 400
+    if url and has_image:
+        return jsonify({'error': 'url and image cannot be combined'}), 400
+    if has_image and not allowed_file(file.filename):
+        return jsonify({'error': 'unsupported image type'}), 400
+    if url and not url.startswith(('http://', 'https://')):
+        return jsonify({'error': 'url must start with http:// or https://'}), 400
+
+    try:
+        post_time = parse_api_timestamp(data.get('date'), data.get('time'))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    if url and is_duplicate_link(url):
+        return jsonify({'error': 'link already posted or queued', 'url': url}), 409
+
+    if has_image:
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        image_name = f"{stamp}_{secure_filename(file.filename)}"
+        file.save(os.path.join(IMAGES_FOLDER, image_name))
+        content = f"{image_name}|{text}"
+    elif url:
+        if not text:
+            try:
+                text = (fetch_page_metadata(url).get('title') or '').strip()
+            except Exception:
+                text = ''
+        content = f"{url}|{text}"
+    else:
+        content = text
+
+    if post_time is None:
+        queue_once(content)
+        return jsonify({'status': 'queued'}), 201
+
+    with posting_lock():
+        ok = add_to_posted(content, post_time=post_time)
+    if not ok:
+        return jsonify({'error': 'link already posted', 'url': url}), 409
+    return jsonify({'status': 'posted_local', 'timestamp': post_time.strftime('%Y-%m-%d %H:%M:%S')}), 201
+
 @app.route('/images/<path:filename>')
 def serve_image(filename):
     """Serve images from the images folder"""
@@ -1453,6 +1722,8 @@ def serve_image(filename):
     return send_from_directory(IMAGES_FOLDER, filename)
 
 if __name__ == "__main__":
+    get_api_key()
+    
     # Start auto-poster thread
     poster_thread = threading.Thread(target=auto_poster_thread, daemon=True)
     poster_thread.start()
@@ -1462,4 +1733,9 @@ if __name__ == "__main__":
     rss_thread.start()
     
     # Run Flask app
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    debug = os.getenv('MICROBLOG_DEBUG') == '1'
+    host = os.getenv('MICROBLOG_HOST', '127.0.0.1')
+    port = int(os.getenv('MICROBLOG_PORT', '5000'))
+
+    # Run Flask app
+    app.run(debug=debug, use_reloader=False, host=host, port=port)

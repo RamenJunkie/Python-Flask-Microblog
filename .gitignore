@@ -1,0 +1,22 @@
+# Runtime data (yours, not the code's)
+microblog.db
+posted.txt
+topost.txt
+.post.lock
+
+# Images: keep the fallback icon, ignore everything else
+images/*
+!images/rss.png
+static/uploads/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Secrets / env
+.env
+*.log
+
+./legacy
