@@ -1239,7 +1239,7 @@ def setup():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
-        password_confirm = request.form.get('password_confirm', '').strip()
+        password_confirm = request.form.get('confirm_password', '').strip()
         
         if not username or not password:
             flash('Username and password are required', 'error')
